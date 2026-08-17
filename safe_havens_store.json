@@ -1,0 +1,197 @@
+[
+  {
+    "id": "haven-shelter-stuyvesant",
+    "name": "Stuyvesant High Emergency Evacuation Shelter",
+    "type": "shelter",
+    "location": {
+      "lat": 40.7178,
+      "lon": -74.0138
+    },
+    "address": "345 Chambers St, New York, NY 10282",
+    "capacity": 1200,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-hospital-downtown",
+    "name": "NewYork-Presbyterian Lower Manhattan Hospital",
+    "type": "hospital",
+    "location": {
+      "lat": 40.7108,
+      "lon": -74.0049
+    },
+    "address": "170 William St, New York, NY 10038",
+    "capacity": 450,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-shelter-pace",
+    "name": "Pace Community Emergency Relief Center",
+    "type": "shelter",
+    "location": {
+      "lat": 40.7112,
+      "lon": -74.0055
+    },
+    "address": "1 Pace Plaza, New York, NY 10038",
+    "capacity": 800,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-assembly-battery-pier",
+    "name": "Battery Park Pier A Maritime Evacuation Point",
+    "type": "assembly_point",
+    "location": {
+      "lat": 40.7042,
+      "lon": -74.0172
+    },
+    "address": "22 Battery Pl, New York, NY 10004",
+    "capacity": 2500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-shelter-murry",
+    "name": "Murry Bergtraum Emergency Center",
+    "type": "shelter",
+    "location": {
+      "lat": 40.7122,
+      "lon": -73.9995
+    },
+    "address": "411 Pearl St, New York, NY 10038",
+    "capacity": 650,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-assembly-city-hall",
+    "name": "City Hall Park Emergency Triage & Rally Hub",
+    "type": "assembly_point",
+    "location": {
+      "lat": 40.7126,
+      "lon": -74.0068
+    },
+    "address": "Broadway & Murray St, New York, NY 10007",
+    "capacity": 1500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-17154b0c-8294-40c7-8036-bee19a42b52d",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-a38c0494-d273-46f8-8569-800deb43eac9",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-b0f99a8a-4395-451a-88ba-889a36f5cca3",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-4f40043c-79c1-441b-bf8d-fe87949593c5",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-dd3178ea-5002-42fa-b464-3b7b5dd1665d",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-5842fda2-cd84-4648-9d70-13747ab901d7",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-ad5d0043-20be-4641-9969-25e9960addc9",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-ea56cb52-70fb-401d-a636-27894668bc5b",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  },
+  {
+    "id": "haven-aa464ecc-1805-42a0-a2b8-09e3b1861077",
+    "name": "Custom Pier Evacuation Point",
+    "type": "shelter",
+    "location": {
+      "lat": 40.705,
+      "lon": -74.015
+    },
+    "address": "Pier 17, New York, NY",
+    "capacity": 500,
+    "is_compromised": false,
+    "compromised_reason": null
+  }
+]

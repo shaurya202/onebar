@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#070c18">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>OneBar — Emergency Evacuation & Resilient Safety Navigation</title>
+  <meta name="description" content="Mobile-first offline emergency evacuation map, real-time hazard API feeds, and fastest route to safety.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <!-- Full-screen map viewport -->
+  <main id="map" role="application" aria-label="Emergency Evacuation Map"></main>
+
+  <!-- Top Floating Navigation Card -->
+  <header id="top-nav-card" class="map-floating-card">
+    <div class="search-box">
+      <div class="search-icon-wrapper" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+          <circle cx="12" cy="9" r="2.5"/>
+        </svg>
+      </div>
+      <div class="search-details">
+        <div id="top-place-title" class="search-title">OneBar Navigation</div>
+        <div id="top-place-subtitle" class="search-subtitle">Connecting to spatial graph…</div>
+      </div>
+      <div class="top-status-group">
+        <div id="connectivity-badge" class="status-badge" title="Cellular connection">
+          <span class="signal-bars-icon" aria-hidden="true">
+            <span class="bar bar-1"></span>
+            <span class="bar bar-2"></span>
+            <span class="bar bar-3"></span>
+            <span class="bar bar-4"></span>
+          </span>
+          <span id="connectivity-text">Online</span>
+        </div>
+        <div id="gps-badge" class="status-badge" title="GPS status">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <circle cx="12" cy="12" r="3"/>
+            <line x1="12" y1="1" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="1" y1="12" x2="5" y2="12"/>
+            <line x1="19" y1="12" x2="23" y2="12"/>
+          </svg>
+          <span id="gps-text">GPS</span>
+        </div>
+        <button id="btn-top-quick-evacuate" class="btn-top-evacuate-badge" aria-label="Fastest Route to Safety" title="Auto-Route to Safety">
+          SAFE ROUTE
+        </button>
+        <button id="btn-top-sos" class="btn-sos-badge" aria-label="Open Emergency SOS Beacon">
+          SOS
+        </button>
+      </div>
+    </div>
+
+    <!-- Category Filter Chips -->
+    <div id="quick-category-chips" class="chips-scroll">
+      <button class="chip-item active" data-filter="all">All Roads</button>
+      <button class="chip-item chip-shelter-filter" data-filter="shelters">Shelters (<span id="chip-shelter-count">0</span>)</button>
+      <button class="chip-item chip-hazard-filter" data-filter="hazards">Hazards (<span id="chip-hazard-count">0</span>)</button>
+      <button class="chip-item" data-filter="feeds">Live Feeds</button>
+    </div>
+  </header>
+
+  <!-- Live Turn-by-Turn Navigation HUD Card -->
+  <div id="nav-guidance-hud" class="map-floating-card hidden">
+    <div class="hud-main">
+      <div id="hud-turn-icon" class="hud-turn-icon" aria-hidden="true">
+        <!-- Injected dynamically via SVG -->
+      </div>
+      <div class="hud-text-group">
+        <div id="hud-instruction" class="hud-instruction">Head towards safety haven</div>
+        <div id="hud-sub-instruction" class="hud-sub-instruction">Follow designated evacuation route</div>
+      </div>
+      <button id="btn-close-hud-route" class="hud-close-btn" aria-label="Exit Navigation" title="Exit Navigation">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Context Banner -->
+  <div id="mode-banner" class="hidden" role="alert"></div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="hidden" role="status" aria-live="polite"></div>
+
+  <!-- Right Floating Map HUD Controls -->
+  <aside id="map-controls-stack" aria-label="Map Controls">
+    <button id="btn-compass" class="map-control-btn compass-btn" aria-label="Reset North Orientation" title="Reset North">
+      <div id="compass-dial" class="compass-dial">
+        <span class="compass-n">N</span>
+        <div id="compass-needle" class="compass-arrow"></div>
+      </div>
+    </button>
+
+    <div class="map-control-group">
+      <button id="btn-pull-api-fab" class="map-control-btn feed-sync-fab" aria-label="Pull Hazard Feeds from APIs" title="Pull Hazard Feeds">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+      </button>
+      <button id="btn-layer-switcher" class="map-control-btn" aria-label="Map Layers" title="Map Layers">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+          <polyline points="2 17 12 22 22 17"/>
+          <polyline points="2 12 12 17 22 12"/>
+        </svg>
+      </button>
+      <button id="btn-contrast-toggle" class="map-control-btn" aria-label="Toggle High-Contrast HUD" title="High-Contrast Mode">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/>
+        </svg>
+      </button>
+      <button id="btn-cache-tiles" class="map-control-btn" aria-label="Pre-cache Region Map for Offline" title="Save Offline Map">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="map-control-group">
+      <button id="btn-zoom-in" class="map-control-btn" aria-label="Zoom In" title="Zoom In">+</button>
+      <button id="btn-zoom-out" class="map-control-btn" aria-label="Zoom Out" title="Zoom Out">−</button>
+    </div>
+
+    <button id="btn-quick-hazard" class="map-control-btn hazard-fab" aria-label="Report Hazard" title="Report Hazard">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+    </button>
+
+    <button id="btn-locate" class="map-control-btn locate-fab" aria-label="Center on Location" title="Center Location">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8"/>
+        <line x1="12" y1="2" x2="12" y2="6"/>
+        <line x1="12" y1="18" x2="12" y2="22"/>
+        <line x1="2" y1="12" x2="6" y2="12"/>
+        <line x1="18" y1="12" x2="22" y2="12"/>
+      </svg>
+    </button>
+  </aside>
+
+  <!-- Bottom Sheet: Multi-State Emergency Action Deck -->
+  <section id="bottom-sheet" class="bottom-sheet" aria-label="Navigation Panel">
+    <div id="sheet-drag-handle" class="sheet-handle-bar">
+      <div class="sheet-handle"></div>
+    </div>
+
+    <!-- State 1: Idle Overview -->
+    <div id="sheet-idle-state" class="sheet-content">
+      <div class="sheet-overview-header">
+        <div class="overview-title-group">
+          <h2 class="overview-title">Emergency Evacuation</h2>
+          <div id="overview-subtitle" class="overview-subtitle">Real-time hazard routing & shelter network</div>
+        </div>
+        <div class="overview-badges">
+          <span id="hazards-count-badge" class="badge badge-hazard">0 Hazards</span>
+          <span id="shelters-count-badge" class="badge badge-shelter">0 Safe Havens</span>
+        </div>
+      </div>
+
+      <div class="sheet-primary-actions">
+        <!-- Hero Button 1: Auto-Evacuate to Safety -->
+        <button id="btn-hero-evacuate" class="btn btn-hero-evacuate">
+          <div class="btn-hero-icon-box">
+            <span class="pulse-beacon-hero"></span>
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <path d="M9 12l2 2 4-4"/>
+            </svg>
+          </div>
+          <div class="btn-hero-text">
+            <span class="btn-hero-title">EVACUATE TO SAFETY</span>
+            <span class="btn-hero-subtitle">Fastest route to verified safe shelter avoiding hazards</span>
+          </div>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+            <polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </button>
+
+        <!-- Secondary: Custom Route Planner -->
+        <button id="btn-open-route-planner" class="btn btn-hero-secondary">
+          <div class="btn-hero-sec-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+            </svg>
+          </div>
+          <div class="btn-hero-text">
+            <span class="btn-sec-title">Custom Destination Planner</span>
+            <span class="btn-sec-subtitle">Route to a specific coordinate on the map</span>
+          </div>
+        </button>
+
+        <!-- Emergency Quick Actions Row -->
+        <div class="sheet-action-grid">
+          <button id="btn-open-feed-sync" class="btn btn-ghost btn-grid-action">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#3b82f6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span class="btn-label">Pull Hazard APIs</span>
+          </button>
+          <button id="btn-view-safe-havens" class="btn btn-ghost btn-grid-action">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#10b981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            <span class="btn-label">Safe Shelters</span>
+          </button>
+          <button id="btn-sheet-hazard" class="btn btn-ghost btn-grid-action">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span class="btn-label">Report Hazard</span>
+          </button>
+          <button id="btn-sheet-sos" class="btn btn-danger-ghost btn-grid-action">
+            <span class="sos-text-dot"></span>
+            <span class="btn-label">SOS Beacon</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- State 2: Route Planner -->
+    <div id="sheet-planner-state" class="sheet-content hidden">
+      <div class="planner-header">
+        <h3 class="planner-title">Custom Route Planner</h3>
+        <div class="mode-toggle-group">
+          <button id="btn-mode-drive" class="mode-btn active" data-mode="drive">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="9" rx="2"/>
+              <path d="M5 11l2-6h10l2 6"/>
+              <circle cx="7.5" cy="16.5" r="1.5"/>
+              <circle cx="16.5" cy="16.5" r="1.5"/>
+            </svg>
+            Drive
+          </button>
+          <button id="btn-mode-walk" class="mode-btn" data-mode="walk">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="4" r="2"/>
+              <path d="M9 20l3-6 2 3 2 3M10 14l-2 3M12 9v5l3-2"/>
+            </svg>
+            Walk
+          </button>
+        </div>
+      </div>
+
+      <div class="waypoints-card">
+        <div class="waypoint-row">
+          <div class="waypoint-indicator origin-dot">A</div>
+          <div class="waypoint-input-box">
+            <label class="waypoint-label">Origin (Start)</label>
+            <div id="origin-label" class="waypoint-value">Current Location</div>
+          </div>
+          <button id="btn-set-origin-tap" class="btn-waypoint-action" title="Set Origin on Map">Pin on Map</button>
+        </div>
+
+        <div class="waypoint-divider">
+          <button id="btn-swap-waypoints" class="btn-swap" title="Swap Origin and Destination" aria-label="Swap Origin and Destination">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="17 4 21 8 17 12"/>
+              <line x1="21" y1="8" x2="9" y2="8"/>
+              <polyline points="7 20 3 16 7 12"/>
+              <line x1="3" y1="16" x2="15" y2="16"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="waypoint-row">
+          <div class="waypoint-indicator dest-dot">B</div>
+          <div class="waypoint-input-box">
+            <label class="waypoint-label">Destination</label>
+            <div id="dest-label" class="waypoint-value placeholder">Select point on map…</div>
+          </div>
+          <button id="btn-set-dest-tap" class="btn-waypoint-action" title="Set Destination on Map">Pin on Map</button>
+        </div>
+      </div>
+
+      <div class="planner-actions">
+        <button id="btn-cancel-planner" class="btn btn-ghost">Cancel</button>
+        <button id="btn-calculate-route" class="btn btn-primary" disabled>
+          <span>Calculate Safe Route</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- State 3: Active Route Summary & Turn Guidance -->
+    <div id="sheet-route-state" class="sheet-content hidden">
+      <!-- Safe Haven Destination Card (When navigating to a safe haven) -->
+      <div id="route-haven-card" class="haven-dest-card hidden">
+        <div class="haven-dest-header">
+          <div class="haven-dest-icon-box">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#10b981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <path d="M9 12l2 2 4-4"/>
+            </svg>
+          </div>
+          <div class="haven-dest-info">
+            <div class="haven-dest-tag">VERIFIED SAFE HAVEN</div>
+            <div id="route-haven-name" class="haven-dest-title">Emergency Shelter</div>
+            <div id="route-haven-address" class="haven-dest-sub">Safety Perimeter Clearance</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="route-metrics-bar">
+        <div class="metric-item eta-item">
+          <div class="metric-value"><span id="route-time">—</span> <span class="metric-unit">min</span></div>
+          <div class="metric-label">Estimated Time</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-value"><span id="route-dist">—</span> <span class="metric-unit">km</span></div>
+          <div class="metric-label">Distance</div>
+        </div>
+        <div class="metric-item hazard-avoided-item">
+          <div class="metric-value"><span id="route-blocked">—</span> <span class="metric-unit">avoided</span></div>
+          <div class="metric-label">Hazards Cleared</div>
+        </div>
+      </div>
+
+      <div id="route-warning" class="route-warning-banner hidden"></div>
+
+      <!-- Turn-by-Turn Directions List -->
+      <div class="maneuvers-deck">
+        <div class="maneuvers-deck-header">
+          <span class="deck-title">Turn Directions</span>
+          <span id="maneuvers-count" class="badge">0 steps</span>
+        </div>
+        <ol id="maneuvers-list" class="maneuvers-list"></ol>
+      </div>
+
+      <div class="route-sheet-actions">
+        <button id="btn-share-route" class="btn btn-ghost">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"/>
+            <circle cx="6" cy="12" r="3"/>
+            <circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          <span>Share Route</span>
+        </button>
+        <button id="btn-clear-route" class="btn btn-danger">
+          <span>Exit Navigation</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- State 4: Polygon Drawing Controls -->
+    <div id="sheet-draw-state" class="sheet-content hidden">
+      <div class="draw-header">
+        <h3 class="draw-title">Draw Perimeter</h3>
+        <span class="draw-subtitle">Tap map to mark boundary vertices</span>
+      </div>
+
+      <div class="draw-controls-row">
+        <button id="btn-undo" class="btn btn-ghost">
+          <span class="btn-label">Undo Point</span>
+        </button>
+        <button id="btn-finish" class="btn btn-success" disabled>
+          <span class="btn-label">Finish (0/3)</span>
+        </button>
+        <button id="btn-cancel-draw" class="btn btn-danger">
+          <span class="btn-label">Cancel</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Live Hazard Feeds Sync Modal -->
+  <div id="api-sync-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="feed-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <div class="modal-title-icon-wrapper">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#3b82f6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </div>
+          <div>
+            <h3 id="feed-modal-title" class="modal-title">Pull Emergency Hazard APIs</h3>
+            <div class="modal-subtitle">Real-time hazard feeds & crisis incident ingestion</div>
+          </div>
+        </div>
+        <button id="btn-close-sync-x" class="btn-modal-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="feeds-source-selection">
+        <label class="feed-source-card">
+          <input type="checkbox" id="feed-source-nws" checked>
+          <div class="feed-source-info">
+            <div class="feed-source-name">NOAA / National Weather Service (NWS)</div>
+            <div class="feed-source-desc">Active flash flood, severe storm, wildfire red flags</div>
+          </div>
+        </label>
+        <label class="feed-source-card">
+          <input type="checkbox" id="feed-source-usgs" checked>
+          <div class="feed-source-info">
+            <div class="feed-source-name">USGS Earthquake Hazards API</div>
+            <div class="feed-source-desc">Real-time seismic epicenters & structural collapse zones</div>
+          </div>
+        </label>
+        <label class="feed-source-card">
+          <input type="checkbox" id="feed-source-eonet" checked>
+          <div class="feed-source-info">
+            <div class="feed-source-name">NASA EONET Natural Event Tracker</div>
+            <div class="feed-source-desc">Tracked wildfire perimeters, flood inundations</div>
+          </div>
+        </label>
+        <label class="feed-source-card">
+          <input type="checkbox" id="feed-source-sim" checked>
+          <div class="feed-source-info">
+            <div class="feed-source-name">Emergency Incident & Crisis Feeds</div>
+            <div class="feed-source-desc">Municipal road blockades, power line down, urban hazards</div>
+          </div>
+        </label>
+      </div>
+
+      <label class="checkbox-label" for="feed-clear-existing">
+        <input type="checkbox" id="feed-clear-existing">
+        <span>Clear previous hazards before sync</span>
+      </label>
+
+      <div class="modal-actions">
+        <button id="btn-sync-cancel" type="button" class="btn btn-ghost">Close</button>
+        <button id="btn-trigger-api-sync" type="button" class="btn btn-primary">
+          <span>Pull Hazards Now</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Safe Havens Directory Modal -->
+  <div id="havens-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="havens-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <div class="modal-title-icon-wrapper">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#10b981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 id="havens-modal-title" class="modal-title">Emergency Safe Havens</h3>
+            <div class="modal-subtitle">Designated regional shelters & medical hubs</div>
+          </div>
+        </div>
+        <button id="btn-close-havens-x" class="btn-modal-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="havens-list-container" class="havens-list">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-havens-close" type="button" class="btn btn-ghost btn-full">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Basemap Layers Modal -->
+  <div id="layers-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="layers-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="layers-title" class="modal-title">Map Layer</h3>
+        <button id="btn-close-layers" class="btn-modal-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="layers-grid">
+        <button class="layer-card-btn active" data-layer="dark">
+          <div class="layer-thumb-box layer-thumb-dark">
+            <span class="layer-indicator-dot"></span>
+          </div>
+          <div class="layer-name">Dark Mode</div>
+          <div class="layer-desc">Tactical high contrast</div>
+        </button>
+        <button class="layer-card-btn" data-layer="street">
+          <div class="layer-thumb-box layer-thumb-street">
+            <span class="layer-indicator-dot"></span>
+          </div>
+          <div class="layer-name">Street Map</div>
+          <div class="layer-desc">Standard roads & labels</div>
+        </button>
+        <button class="layer-card-btn" data-layer="satellite">
+          <div class="layer-thumb-box layer-thumb-satellite">
+            <span class="layer-indicator-dot"></span>
+          </div>
+          <div class="layer-name">Satellite</div>
+          <div class="layer-desc">Aerial imagery</div>
+        </button>
+        <button class="layer-card-btn" data-layer="osm">
+          <div class="layer-thumb-box layer-thumb-osm">
+            <span class="layer-indicator-dot"></span>
+          </div>
+          <div class="layer-name">Topography</div>
+          <div class="layer-desc">OpenStreetMap terrain</div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hazard Configuration Modal -->
+  <div id="hazard-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="hazard-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="hazard-modal-title" class="modal-title">Report Hazard Zone</h3>
+        <button id="btn-hazard-close-x" class="btn-modal-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="hazard-mode-tabs">
+        <button type="button" id="tab-hazard-radial" class="tab-btn active">Radius Zone</button>
+        <button type="button" id="tab-hazard-polygon" class="tab-btn">Draw Boundary</button>
+      </div>
+
+      <label class="input-label" for="hazard-name-input">Label / Details (Optional)</label>
+      <input id="hazard-name-input" type="text" placeholder="e.g. Fallen Tree, Water Inundation" autocomplete="off" />
+
+      <label class="input-label">Hazard Type</label>
+      <div id="hazard-modal-types" class="hazard-types-grid">
+        <button type="button" class="type-btn active" data-type="closure">Road Closure</button>
+        <button type="button" class="type-btn" data-type="wildfire">Fire / Heat</button>
+        <button type="button" class="type-btn" data-type="flood">Flood Water</button>
+        <button type="button" class="type-btn" data-type="debris">Debris Obstruction</button>
+        <button type="button" class="type-btn" data-type="powerline">Downed Power</button>
+        <button type="button" class="type-btn" data-type="collapse">Structural</button>
+      </div>
+
+      <!-- Radial Radius Selector -->
+      <div id="hazard-radius-section">
+        <label class="input-label">Impact Radius</label>
+        <div id="hazard-radius-options" class="pill-group">
+          <button type="button" class="radius-btn" data-radius="50">50m</button>
+          <button type="button" class="radius-btn active" data-radius="100">100m</button>
+          <button type="button" class="radius-btn" data-radius="250">250m</button>
+          <button type="button" class="radius-btn" data-radius="500">500m</button>
+        </div>
+      </div>
+
+      <label class="input-label">Safety Buffer Margin</label>
+      <div id="hazard-buffer-options" class="pill-group">
+        <button type="button" class="buffer-btn active" data-buffer="0">None</button>
+        <button type="button" class="buffer-btn" data-buffer="25">+25m</button>
+        <button type="button" class="buffer-btn" data-buffer="50">+50m</button>
+        <button type="button" class="buffer-btn" data-buffer="100">+100m</button>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-hazard-cancel" type="button" class="btn btn-ghost">Cancel</button>
+        <button id="btn-hazard-submit" type="button" class="btn btn-primary">Apply Hazard</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Emergency SOS Beacon Modal -->
+  <div id="sos-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="sos-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="sos-header-title">
+          <span class="sos-indicator-dot"></span>
+          <div>
+            <h3 id="sos-modal-title" class="modal-title">Emergency SOS Beacon</h3>
+            <div class="sos-subtitle">Low-bandwidth SMS location broadcaster</div>
+          </div>
+        </div>
+        <button id="btn-close-sos-x" class="btn-modal-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="sos-location-box">
+        <div class="sos-field-label">Current GPS Coordinates</div>
+        <div id="sos-coords-text" class="sos-field-value">Acquiring position…</div>
+      </div>
+
+      <div class="sos-preview-box">
+        <div class="sos-field-label">Broadcast Payload Preview</div>
+        <textarea id="sos-message-preview" readonly></textarea>
+      </div>
+
+      <div class="sos-actions">
+        <button id="btn-send-sms" class="btn btn-danger btn-full">
+          <span>Send Emergency SMS</span>
+        </button>
+        <button id="btn-copy-coords" class="btn btn-ghost btn-full">
+          <span>Copy to Clipboard</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+  <!-- App Logic (ES module) -->
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

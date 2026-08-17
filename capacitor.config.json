@@ -1,0 +1,39 @@
+{
+  "appId": "com.onebar.emergency",
+  "appName": "OneBar",
+  "webDir": "static",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "ionic",
+    "cleartext": true
+  },
+  "plugins": {
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#070c18",
+      "overlaysWebView": true
+    },
+    "Geolocation": {
+      "permissions": ["location"]
+    },
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "launchAutoHide": true,
+      "backgroundColor": "#070c18",
+      "androidSplashResourceName": "splash",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false
+    }
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "ios": {
+    "contentInset": "always",
+    "scheme": "OneBar",
+    "limitsNavigationsToAppBoundDomains": false
+  }
+}

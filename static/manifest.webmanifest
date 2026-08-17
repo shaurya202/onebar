@@ -1,0 +1,50 @@
+{
+  "name": "OneBar Emergency Navigation",
+  "short_name": "OneBar",
+  "description": "Mobile-first offline emergency evacuation map and resilient routing for crisis scenarios.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#070c18",
+  "theme_color": "#070c18",
+  "orientation": "portrait-primary",
+  "categories": ["navigation", "crisis", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='40' fill='%23070c18'/%3E%3Ccircle cx='96' cy='96' r='60' fill='%232563eb' opacity='0.2'/%3E%3Cpolygon points='96,35 155,145 37,145' fill='%232563eb' stroke='%2360a5fa' stroke-width='4'/%3E%3Ccircle cx='96' cy='125' r='8' fill='%23ffffff'/%3E%3Crect x='92' y='65' width='8' height='45' rx='4' fill='%23ffffff'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='110' fill='%23070c18'/%3E%3Ccircle cx='256' cy='256' r='180' fill='%232563eb' opacity='0.25'/%3E%3Cpolygon points='256,90 410,380 102,380' fill='%232563eb' stroke='%2360a5fa' stroke-width='10'/%3E%3Ccircle cx='256' cy='330' r='20' fill='%23ffffff'/%3E%3Crect x='246' y='170' width='20' height='120' rx='10' fill='%23ffffff'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Plan Evacuation Route",
+      "short_name": "Route",
+      "description": "Calculate resilient evacuation route avoiding hazards",
+      "url": "/?action=route",
+      "icons": [{ "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='48' r='44' fill='%232563eb'/%3E%3Cpolygon points='48,18 72,70 48,58 24,70' fill='%23ffffff'/%3E%3C/svg%3E", "sizes": "96x96" }]
+    },
+    {
+      "name": "Report Hazard",
+      "short_name": "Hazard",
+      "description": "Drop a hazard perimeter or quick radial crisis zone",
+      "url": "/?action=hazard",
+      "icons": [{ "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='48' r='44' fill='%23ef4444'/%3E%3Cpolygon points='48,20 78,74 18,74' fill='none' stroke='%23ffffff' stroke-width='6'/%3E%3Cline x1='48' y1='40' x2='48' y2='56' stroke='%23ffffff' stroke-width='6' stroke-linecap='round'/%3E%3Ccircle cx='48' cy='66' r='3' fill='%23ffffff'/%3E%3C/svg%3E", "sizes": "96x96" }]
+    },
+    {
+      "name": "Emergency SOS Beacon",
+      "short_name": "SOS",
+      "description": "Broadcast 1-Bar SMS Emergency Beacon",
+      "url": "/?action=sos",
+      "icons": [{ "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='48' r='44' fill='%23dc2626'/%3E%3Ctext x='48' y='58' font-family='sans-serif' font-size='28' font-weight='900' text-anchor='middle' fill='%23ffffff'%3ESOS%3C/text%3E%3C/svg%3E", "sizes": "96x96" }]
+    }
+  ]
+}
