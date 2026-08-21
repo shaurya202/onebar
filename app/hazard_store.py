@@ -1,3 +1,12 @@
+# Annotations are evaluated lazily. HazardStore defines methods named `list` and `get`,
+# which shadow the builtins for the rest of the class body, so an eagerly evaluated
+# `list[HazardZone]` annotation on any member declared below them raises
+# "TypeError: 'function' object is not subscriptable" at import time. Python 3.14
+# postpones annotations by default (PEP 649) and hides that; the shipped runtime is
+# 3.12 (see Dockerfile), where this import is the only thing keeping the module
+# importable.
+from __future__ import annotations
+
 import json
 import os
 import threading

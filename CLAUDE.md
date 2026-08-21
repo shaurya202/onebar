@@ -193,6 +193,14 @@ These are enforced by tests; do not weaken them.
 
 ## Gotchas
 
+- **The shipped runtime is Python 3.12** — the Dockerfile builds on `python:3.12-slim`
+  and CI runs the suite on 3.12 — while the checked-in dev venv is 3.14. 3.14 postpones
+  annotation evaluation (PEP 649) and 3.12 does not, so a module that imports fine
+  locally can raise at import time in CI. `HazardStore.list`/`get` and
+  `SafeHavenStore.list`/`get` shadow the builtins inside their class bodies, which made
+  every later `list[...]` annotation a `TypeError: 'function' object is not
+  subscriptable` on 3.12; both modules carry `from __future__ import annotations` for
+  that reason. Don't drop those imports, and don't trust a green local run alone.
 - **Coordinate order flips at the boundary.** Shapely, OSMnx and graph node attributes use `(x=lon, y=lat)`; the API schemas, Leaflet and all JSON payloads use `{lat, lon}`. `GraphManager.nearest_node(lon, lat)` takes lon first. Verify ordering on any new spatial code.
 - **Test isolation is mandatory.** `tests/conftest.py` redirects `ONEBAR_HAZARDS_FILE`,
   `ONEBAR_HAVENS_FILE` and `ONEBAR_CACHE` into `tmp_path` and disables network haven
