@@ -252,8 +252,8 @@ When dividing tasks across agents or contributors, assign tasks according to the
 
 ### Running the Backend
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (requirements-dev.txt adds pytest, httpx and ruff)
+pip install -r requirements-dev.txt
 
 # Run FastAPI dev server
 uvicorn app.index:app --host 0.0.0.0 --port 8000 --reload

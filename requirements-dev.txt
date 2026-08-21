@@ -1,0 +1,7 @@
+# Test and lint tooling. Kept out of requirements.txt so the runtime image in
+# Dockerfile stays free of it; CI installs both files.
+-r requirements.txt
+httpx==0.28.1        # fastapi.testclient imports it; without it every API test errors
+httpcore==1.0.9
+pytest==9.1.1
+ruff==0.16.4

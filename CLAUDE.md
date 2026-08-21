@@ -7,6 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 All Python commands assume the checked-in virtualenv at `.venv` (Windows layout).
 
 ```powershell
+# Install dependencies (requirements-dev.txt is requirements.txt plus pytest,
+# httpx and ruff — the runtime file alone leaves you with no test runner)
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+
 # Backend dev server (serves the frontend at http://localhost:8000 too)
 .venv\Scripts\python -m uvicorn app.index:app --host 0.0.0.0 --port 8000 --reload
 

@@ -17,20 +17,29 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       # Node runs the offline routing engine for the cross-engine parity tests, and
       # boots the frontend in jsdom. Without it those tests skip, and the two routers
       # are free to drift apart while the app is free to fail at module load.
+      #
+      # jsdom 30 declares `engines: ^22.22.2 || ^24.15.0 || >=26.0.0`; npm only warns
+      # about that, and the boot check then fails at runtime on an older Node. Keep
+      # this at or above the version the frontend tests are developed against.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - name: Install dependencies
+        # requirements-dev.txt pulls in requirements.txt and adds pytest, httpx
+        # (fastapi.testclient needs it) and ruff. Installing only the runtime
+        # requirements leaves the job with no pytest at all.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install ruff
+          pip install -r requirements-dev.txt
           npm ci
 
       - name: Lint

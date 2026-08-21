@@ -96,6 +96,8 @@ source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+# ...or, to run the test suite and the linter as well:
+pip install -r requirements-dev.txt
 
 # Run FastAPI server
 uvicorn app.index:app --host 0.0.0.0 --port 8000 --reload
