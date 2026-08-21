@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests and lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Node runs the offline routing engine for the cross-engine parity tests, and
+      # boots the frontend in jsdom. Without it those tests skip, and the two routers
+      # are free to drift apart while the app is free to fail at module load.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+          npm ci
+
+      - name: Lint
+        run: ruff check app tools tests
+
+      - name: Verify the offline engine parses
+        run: |
+          for f in static/js/*.js static/sw.js tools/*.mjs; do node --check "$f"; done
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Confirm the frontend boot check actually ran
+        # It skips when Node or jsdom is missing, which would silently remove the only
+        # check that the shipped page loads at all.
+        run: |
+          python -m pytest tests/test_frontend_boot.py -q --no-header -rN | tee boot.log
+          if grep -qi "skipped" boot.log && ! grep -qiE "[0-9]+ passed" boot.log; then
+            echo "Frontend boot check did not run"; exit 1
+          fi
+          rm -f boot.log
+
+      - name: Confirm the parity tests actually ran
+        # These are skipped when Node is missing, which would silently remove the
+        # only guard against the two routing implementations diverging.
+        run: |
+          python -m pytest tests/test_route_parity.py -q --no-header -rN \
+            | tee parity.log
+          if grep -qi "skipped" parity.log && ! grep -qiE "[0-9]+ passed" parity.log; then
+            echo "Route parity tests did not run"; exit 1
+          fi
+          rm -f parity.log
+
+      - name: Fail if a test run mutated tracked files
+        # Test runs used to rewrite hazards_store.json and safe_havens_store.json,
+        # and the residue was committed and shipped as real shelter data.
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Test run modified tracked files:"
+            git status --porcelain
+            exit 1
+          fi
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t onebar:ci .

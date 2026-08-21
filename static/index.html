@@ -10,7 +10,7 @@
   <title>OneBar — Emergency Evacuation & Resilient Safety Navigation</title>
   <meta name="description" content="Mobile-first offline emergency evacuation map, real-time hazard API feeds, and fastest route to safety.">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -22,41 +22,76 @@
     <div class="search-box">
       <div class="search-icon-wrapper" aria-hidden="true">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-          <circle cx="12" cy="9" r="2.5"/>
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
       </div>
       <div class="search-details">
-        <div id="top-place-title" class="search-title">OneBar Navigation</div>
-        <div id="top-place-subtitle" class="search-subtitle">Connecting to spatial graph…</div>
+        <label class="visually-hidden" for="search-input">Search for a destination</label>
+        <input
+          id="search-input"
+          class="search-input"
+          type="text"
+          inputmode="search"
+          enterkeyhint="search"
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="Search a street, shelter or coordinates"
+          role="combobox"
+          aria-expanded="false"
+          aria-controls="search-results"
+          aria-autocomplete="list"
+        />
       </div>
-      <div class="top-status-group">
-        <div id="connectivity-badge" class="status-badge" title="Cellular connection">
-          <span class="signal-bars-icon" aria-hidden="true">
-            <span class="bar bar-1"></span>
-            <span class="bar bar-2"></span>
-            <span class="bar bar-3"></span>
-            <span class="bar bar-4"></span>
-          </span>
-          <span id="connectivity-text">Online</span>
-        </div>
-        <div id="gps-badge" class="status-badge" title="GPS status">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="9"/>
-            <circle cx="12" cy="12" r="3"/>
-            <line x1="12" y1="1" x2="12" y2="5"/>
-            <line x1="12" y1="19" x2="12" y2="23"/>
-            <line x1="1" y1="12" x2="5" y2="12"/>
-            <line x1="19" y1="12" x2="23" y2="12"/>
-          </svg>
-          <span id="gps-text">GPS</span>
-        </div>
+      <button id="btn-search-clear" class="btn-search-clear hidden" type="button" aria-label="Clear search">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+      <div class="top-action-group">
         <button id="btn-top-quick-evacuate" class="btn-top-evacuate-badge" aria-label="Fastest Route to Safety" title="Auto-Route to Safety">
           SAFE ROUTE
         </button>
         <button id="btn-top-sos" class="btn-sos-badge" aria-label="Open Emergency SOS Beacon">
           SOS
         </button>
+      </div>
+    </div>
+
+    <div id="search-results" class="search-results hidden" role="listbox" aria-label="Search results"></div>
+
+    <!-- Two separate facts, previously conflated into one cellular-looking badge:
+         whether this device has a connection, and whether OneBar's server answers. -->
+    <div id="status-strip" class="status-strip">
+      <div id="top-place-subtitle" class="region-label">Loading map…</div>
+      <div id="connectivity-badge" class="status-badge" title="This device's connection">
+        <span class="signal-bars-icon" aria-hidden="true">
+          <span class="bar bar-1"></span>
+          <span class="bar bar-2"></span>
+          <span class="bar bar-3"></span>
+          <span class="bar bar-4"></span>
+        </span>
+        <span id="connectivity-text">Online</span>
+      </div>
+      <div id="service-badge" class="status-badge" title="OneBar service status">
+        <span class="service-dot" aria-hidden="true"></span>
+        <span id="service-text">Checking…</span>
+      </div>
+      <div id="gps-badge" class="status-badge" title="GPS status">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/>
+          <circle cx="12" cy="12" r="3"/>
+          <line x1="12" y1="1" x2="12" y2="5"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="1" y1="12" x2="5" y2="12"/>
+          <line x1="19" y1="12" x2="23" y2="12"/>
+        </svg>
+        <span id="gps-text">GPS</span>
+      </div>
+      <div id="pending-badge" class="status-badge pending hidden" title="Reports saved on this device, waiting to upload">
+        <span id="pending-text">0 waiting</span>
       </div>
     </div>
 
@@ -91,6 +126,27 @@
   <!-- Context Banner -->
   <div id="mode-banner" class="hidden" role="alert"></div>
 
+  <!-- Shown whenever any simulated hazard is loaded. Deliberately not dismissible:
+       the user must always know when what they are looking at is not real. -->
+  <div id="drill-banner" class="hidden" role="alert">
+    <strong>DRILL MODE</strong> — hazards shown are simulated and NOT real events.
+    <button id="btn-exit-drill" type="button">Clear drill data</button>
+  </div>
+
+  <!-- A route restored after an app kill. Deliberately offered rather than silently
+       resumed: hazards move, and a route computed twenty minutes ago may now run
+       through one. -->
+  <div id="resume-trip-banner" class="hidden" role="status">
+    <div class="resume-body">
+      <strong>Route saved <span id="resume-age">earlier</span></strong>
+      <span id="resume-destination">Evacuation route</span>
+    </div>
+    <div class="resume-actions">
+      <button id="btn-resume-trip" type="button" class="btn btn-primary">Recheck &amp; resume</button>
+      <button id="btn-dismiss-trip" type="button" class="btn btn-ghost">Dismiss</button>
+    </div>
+  </div>
+
   <!-- Toast Notification -->
   <div id="toast" class="hidden" role="status" aria-live="polite"></div>
 
@@ -122,7 +178,7 @@
           <path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/>
         </svg>
       </button>
-      <button id="btn-cache-tiles" class="map-control-btn" aria-label="Pre-cache Region Map for Offline" title="Save Offline Map">
+      <button id="btn-cache-tiles" class="map-control-btn" aria-label="Download offline map for this region" title="Download offline map">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="7 10 12 15 17 10"/>
@@ -312,7 +368,7 @@
             </svg>
           </div>
           <div class="haven-dest-info">
-            <div class="haven-dest-tag">VERIFIED SAFE HAVEN</div>
+            <div class="haven-dest-tag unconfirmed">MAPPED SHELTER &mdash; NOT CONFIRMED OPEN</div>
             <div id="route-haven-name" class="haven-dest-title">Emergency Shelter</div>
             <div id="route-haven-address" class="haven-dest-sub">Safety Perimeter Clearance</div>
           </div>
@@ -428,19 +484,25 @@
             <div class="feed-source-desc">Tracked wildfire perimeters, flood inundations</div>
           </div>
         </label>
-        <label class="feed-source-card">
-          <input type="checkbox" id="feed-source-sim" checked>
+        <!-- This was labelled "Emergency Incident & Crisis Feeds — municipal road
+             blockades", checked by default, and it generated invented hazards. It is
+             a drill switch; it is now named one, and it is off. -->
+        <label class="feed-source-card feed-source-drill">
+          <input type="checkbox" id="feed-source-sim">
           <div class="feed-source-info">
-            <div class="feed-source-name">Emergency Incident & Crisis Feeds</div>
-            <div class="feed-source-desc">Municipal road blockades, power line down, urban hazards</div>
+            <div class="feed-source-name">Drill mode &mdash; simulated hazards</div>
+            <div class="feed-source-desc">
+              Practice data only. Every hazard is labelled NOT REAL and a banner stays on
+              screen until you clear it. Never use during an actual emergency.
+            </div>
           </div>
         </label>
       </div>
 
-      <label class="checkbox-label" for="feed-clear-existing">
-        <input type="checkbox" id="feed-clear-existing">
-        <span>Clear previous hazards before sync</span>
-      </label>
+      <p class="feed-sync-note">
+        Syncing updates the official alerts for this area. It does not touch your own
+        reports, and it never removes anybody else&rsquo;s.
+      </p>
 
       <div class="modal-actions">
         <button id="btn-sync-cancel" type="button" class="btn btn-ghost">Close</button>
@@ -527,6 +589,24 @@
           <div class="layer-desc">OpenStreetMap terrain</div>
         </button>
       </div>
+
+      <div class="display-settings">
+        <h4 class="settings-heading">Display</h4>
+        <button id="btn-toggle-contrast-setting" type="button" class="settings-row" aria-pressed="false">
+          <span class="settings-row-text">
+            <span class="settings-row-title">High contrast</span>
+            <span class="settings-row-sub">Stronger outlines and brighter text</span>
+          </span>
+          <span class="settings-switch" aria-hidden="true"></span>
+        </button>
+        <button id="btn-toggle-large-text" type="button" class="settings-row" aria-pressed="false">
+          <span class="settings-row-text">
+            <span class="settings-row-title">Large text</span>
+            <span class="settings-row-sub">Increases every text size in the app</span>
+          </span>
+          <span class="settings-switch" aria-hidden="true"></span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -580,6 +660,21 @@
         <button type="button" class="buffer-btn" data-buffer="100">+100m</button>
       </div>
 
+      <label class="share-toggle" for="hazard-share-toggle">
+        <input id="hazard-share-toggle" type="checkbox" />
+        <span class="share-toggle-text">
+          <span class="share-toggle-title">Share this with other people nearby</span>
+          <span class="share-toggle-sub">
+            Off, it stays on your phone and only reroutes you. On, others can see it,
+            confirm it or mark it clear — it is never presented as an official alert.
+          </span>
+        </span>
+      </label>
+
+      <p id="hazard-expiry-note" class="hazard-expiry-note">
+        Reports expire automatically, because conditions change.
+      </p>
+
       <div class="modal-actions">
         <button id="btn-hazard-cancel" type="button" class="btn btn-ghost">Cancel</button>
         <button id="btn-hazard-submit" type="button" class="btn btn-primary">Apply Hazard</button>
@@ -588,6 +683,141 @@
   </div>
 
   <!-- Emergency SOS Beacon Modal -->
+
+  <!-- First run. The app previously opened straight onto a live emergency map and
+       fired the OS location prompt cold, with no statement anywhere of what it is and
+       is not. Nothing is requested until the user has been told. -->
+  <div id="welcome-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+    <div class="modal-panel onboarding-panel">
+      <div class="onboarding-progress" role="progressbar" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1" aria-label="Setup progress">
+        <span class="progress-dot active"></span>
+        <span class="progress-dot"></span>
+        <span class="progress-dot"></span>
+        <span class="progress-dot"></span>
+        <span class="progress-dot"></span>
+      </div>
+
+      <h2 id="welcome-title" class="modal-title onboarding-title">What OneBar does</h2>
+
+      <section class="onboarding-step" data-step="1">
+        <p class="welcome-lead">
+          OneBar routes you to shelter when the network is down. Download a map for your
+          area once, and the routing runs on this phone &mdash; with no signal, in airplane
+          mode, in a blackout.
+        </p>
+        <div class="welcome-point">
+          <strong>It is a map, not a rescue service.</strong>
+          It shows hazards, shows shelters, and finds a way between them. It cannot see
+          you, cannot dispatch anyone, and does not know you are in trouble.
+        </div>
+      </section>
+
+      <section class="onboarding-step hidden" data-step="2">
+        <div class="welcome-point welcome-critical">
+          <strong>This is not a replacement for emergency services.</strong>
+          In an emergency, call your local emergency number first. OneBar cannot contact
+          anyone on your behalf.
+        </div>
+        <div class="welcome-point">
+          <strong>Shelters come from OpenStreetMap.</strong>
+          They are real, mapped places, but OneBar cannot confirm a building is open or
+          staffed right now. Treat every shelter as unconfirmed unless an authority says
+          otherwise.
+        </div>
+        <div class="welcome-point">
+          <strong>Hazards come from NWS, USGS and NASA.</strong>
+          When there are no alerts for your area, OneBar tells you so. It never invents
+          hazards to fill the map.
+        </div>
+      </section>
+
+      <section class="onboarding-step hidden" data-step="3">
+        <p class="welcome-lead">
+          OneBar needs your location to route you out of where you actually are.
+        </p>
+        <div class="welcome-point">
+          <strong>It stays on this device.</strong>
+          Your position is used to draw the map, pick a shelter and compute a route. It
+          is only ever sent anywhere if you choose to put it in an SOS message.
+        </div>
+        <button id="btn-onboard-location" type="button" class="btn btn-primary btn-full">
+          <span>Allow location access</span>
+        </button>
+        <p id="onboard-location-status" class="onboarding-status" role="status"></p>
+        <p class="onboarding-footnote">
+          <a id="link-privacy" href="/privacy" target="_blank" rel="noopener noreferrer">
+            Read the full privacy statement
+          </a>
+          &mdash; what is stored on this phone, what a shared report uploads, and what
+          never leaves the device.
+        </p>
+      </section>
+
+      <section class="onboarding-step hidden" data-step="4">
+        <p class="welcome-lead">
+          Who should hear from you if you need help? One tap fills them into an SOS
+          message with your position and where you are heading.
+        </p>
+        <div class="welcome-point">
+          <strong>Stored on this phone only.</strong>
+          OneBar has no account to attach them to and never uploads them. The message is
+          sent by your own texting app, which is why it still works with no data.
+        </div>
+        <div id="onboard-contacts-summary" class="onboarding-status">No contacts yet.</div>
+        <button id="btn-onboard-contacts" type="button" class="btn btn-primary btn-full">
+          <span>Add emergency contacts</span>
+        </button>
+      </section>
+
+      <section class="onboarding-step hidden" data-step="5">
+        <p class="welcome-lead">
+          Download the map for your area now, while you still have a connection. This is
+          what makes routing work when you do not.
+        </p>
+        <div id="onboard-region-summary" class="onboarding-status">Looking for available regions&hellip;</div>
+        <button id="btn-onboard-download" type="button" class="btn btn-primary btn-full" disabled>
+          <span>Download this area</span>
+        </button>
+        <p class="onboarding-footnote">
+          You can do this later from the download button on the map &mdash; but if you wait
+          until you need it, you may not have the connection to do it.
+        </p>
+      </section>
+
+      <div class="modal-actions onboarding-actions">
+        <button id="btn-onboard-back" type="button" class="btn btn-ghost" hidden>Back</button>
+        <button id="btn-onboard-next" type="button" class="btn btn-primary btn-full">
+          <span>Continue</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Emergency contacts. Also reachable from the SOS dialog. -->
+  <div id="contacts-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="contacts-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3 id="contacts-title" class="modal-title">Emergency contacts</h3>
+          <div class="modal-subtitle">Up to three. Stored on this phone, never uploaded.</div>
+        </div>
+        <button id="btn-close-contacts-x" class="btn-modal-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="contacts-fields" class="contacts-fields"></div>
+
+      <div class="modal-actions">
+        <button id="btn-contacts-cancel" type="button" class="btn btn-ghost">Cancel</button>
+        <button id="btn-contacts-save" type="button" class="btn btn-primary">Save contacts</button>
+      </div>
+    </div>
+  </div>
+
   <div id="sos-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="sos-modal-title">
     <div class="modal-card">
       <div class="modal-header">
@@ -606,9 +836,28 @@
         </button>
       </div>
 
+      <div class="sos-emergency-call">
+        <a id="btn-call-emergency" class="btn btn-emergency btn-full" href="tel:911">
+          <span>Call emergency services</span>
+        </a>
+        <p class="sos-disclaimer">
+          OneBar is not a substitute for emergency services. If you can reach them, call first.
+        </p>
+      </div>
+
       <div class="sos-location-box">
         <div class="sos-field-label">Current GPS Coordinates</div>
         <div id="sos-coords-text" class="sos-field-value">Acquiring position…</div>
+      </div>
+
+      <!-- The composer used to open with an empty recipient field, so the last thing
+           this screen asked of someone in an emergency was to scroll a contact list. -->
+      <div class="sos-contacts-box">
+        <div class="sos-field-label">Send to</div>
+        <div id="sos-contact-list" class="sos-contact-list"></div>
+        <button id="btn-manage-contacts" type="button" class="btn btn-ghost btn-full btn-manage-contacts">
+          <span>Manage emergency contacts</span>
+        </button>
       </div>
 
       <div class="sos-preview-box">
@@ -620,6 +869,9 @@
         <button id="btn-send-sms" class="btn btn-danger btn-full">
           <span>Send Emergency SMS</span>
         </button>
+        <button id="btn-share-location" class="btn btn-ghost btn-full hidden">
+          <span>Share by another app</span>
+        </button>
         <button id="btn-copy-coords" class="btn btn-ghost btn-full">
           <span>Copy to Clipboard</span>
         </button>
@@ -628,7 +880,8 @@
   </div>
 
   <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+  <script src="/static/js/config.js"></script>
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
   <!-- App Logic (ES module) -->
   <script type="module" src="/static/js/app.js"></script>
 </body>

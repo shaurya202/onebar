@@ -1,26 +1,30 @@
-import sys
 import os
+import sys
 import tempfile
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from shapely.geometry import LineString
 from shapely.strtree import STRtree
 
-from schemas import LatLon
 from hazard_store import HazardStore
+from schemas import LatLon
 
 
 def test_crud():
     store = HazardStore(persistence_file=None)
     coords = [LatLon(lat=40.71, lon=-74.01), LatLon(lat=40.72, lon=-74.01), LatLon(lat=40.72, lon=-74.00)]
 
-    zone = store.add(coordinates=coords, name="Test Wildfire", hazard_type="wildfire")
+    zone = store.add(coordinates=coords, name="Test Wildfire", hazard_type="wildfire", reporter="device-a")
     assert zone.hazard_id and zone.name == "Test Wildfire"
     assert len(store.list()) == 1
 
     assert store.get(zone.hazard_id).hazard_id == zone.hazard_id
-    assert store.remove(zone.hazard_id)
+    # Deleting is an ownership-checked operation: the caller must be the reporter.
+    assert store.remove(zone.hazard_id, requester="device-b") == "forbidden"
+    assert store.remove(zone.hazard_id, requester="device-a") == "removed"
     assert store.get(zone.hazard_id) is None
+    assert store.remove(zone.hazard_id, requester="device-a") == "not_found"
 
 
 def test_radial_hazard_and_buffer():

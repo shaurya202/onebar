@@ -1,0 +1,16 @@
+# Backend modules import their siblings as top-level names because app/index.py
+# prepends app/ to sys.path, so ruff must resolve first-party imports the same way.
+line-length = 110
+target-version = "py312"
+src = ["app", "tools", "tests"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = [
+    "E501",   # long lines are enforced by review, not by the linter
+    "B008",   # FastAPI's Depends()/Query() defaults are the framework idiom
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402"]   # sys.path must be set before importing app modules
+"tools/*" = ["E402"]

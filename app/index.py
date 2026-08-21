@@ -11,8 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from api import api_router
+from device import DeviceIdentity
 from graph_loader import GraphManager
 from hazard_store import HazardStore
+from ratelimit import RateLimiter
 from safe_havens import SafeHavenStore
 
 # Resolve paths relative to project root (parent of this file's directory)
@@ -32,6 +34,9 @@ async def lifespan(app: FastAPI):
       ONEBAR_CACHE        — .graphml cache path (default region_graph.graphml)
       ONEBAR_HAZARDS_FILE — hazards persistence file path (default hazards_store.json)
       ONEBAR_HAVENS_FILE  — safe havens persistence file path (default safe_havens_store.json)
+      ONEBAR_ADMIN_TOKEN  — operator token for destructive endpoints (unset = disabled)
+      ONEBAR_RATE_LIMIT   — "0" disables per-device rate limiting
+      ONEBAR_DEVICE_SALT  — overrides the generated salt used to hash device ids
     """
     cache_file = os.getenv("ONEBAR_CACHE", "region_graph.graphml")
     radius = float(os.getenv("ONEBAR_RADIUS", "5000"))
@@ -52,6 +57,10 @@ async def lifespan(app: FastAPI):
     )
     app.state.hazard_store = HazardStore(persistence_file=hazard_file)
     app.state.safe_haven_store = SafeHavenStore(persistence_file=haven_file)
+    # Reports are attributed to an opaque per-device key so a device can manage its
+    # own reports without OneBar holding an account, an email address or a name.
+    app.state.device_identity = DeviceIdentity(neighbour_file=hazard_file)
+    app.state.rate_limiter = RateLimiter()
 
     # Seed havens if region is initialized
     summary = app.state.graph_manager.get_summary()
@@ -67,12 +76,35 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OneBar",
     description="Mobile-first emergency map and evacuation routing API.",
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
-                   allow_methods=["*"], allow_headers=["*"])
+# CORS was allow_origins=["*"] with allow_credentials=True — a combination browsers
+# reject for credentialed requests anyway, and one that left every endpoint open to
+# any site. Native builds send no Origin header, so they are unaffected by this.
+# Capacitor 7 is configured here with `androidScheme`/`iosScheme` of "https", so the
+# WebView's origin is `https://localhost` — not the `capacitor://` and `ionic://`
+# schemes older versions used. Both are listed: the first is what this build sends, the
+# rest keep an older or differently-configured client working.
+_allowed_origins = [
+    o.strip() for o in os.getenv("ONEBAR_ALLOWED_ORIGINS", "").split(",") if o.strip()
+] or [
+    "https://localhost",
+    "http://localhost",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "capacitor://localhost",
+    "ionic://localhost",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-OneBar-Device", "X-OneBar-Admin"],
+)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 app.include_router(api_router)
 
@@ -88,6 +120,20 @@ async def service_worker():
         os.path.join(_STATIC_DIR, "sw.js"),
         media_type="application/javascript",
         headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/privacy", include_in_schema=False)
+async def privacy_policy():
+    """Serve the privacy statement.
+
+    Both app stores require a reachable policy URL, and the app links here from its
+    first-run flow. Served as plain text so it renders in a browser and inside the
+    native WebView without a Markdown renderer or a second stylesheet.
+    """
+    return FileResponse(
+        os.path.join(_ROOT, "PRIVACY.md"),
+        media_type="text/plain; charset=utf-8",
     )
 
 

@@ -7,7 +7,8 @@
     "cap:sync": "cap sync",
     "cap:build": "cap copy && cap sync",
     "cap:android": "cap open android",
-    "cap:ios": "cap open ios"
+    "cap:ios": "cap open ios",
+    "test:parity": "python -m pytest tests/test_route_parity.py -q"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.1",
@@ -20,5 +21,9 @@
     "@capacitor/network": "^7.0.0",
     "@capacitor/screen-orientation": "^7.0.0",
     "@capacitor/status-bar": "^7.0.0"
+  },
+  "type": "module",
+  "devDependencies": {
+    "jsdom": "^30.0.1"
   }
 }

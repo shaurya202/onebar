@@ -15,6 +15,7 @@ let safeHavenLayers = {};   // haven_id -> L.Marker
 let draw = null;             // active draw session state
 let deleteHazardCallback = null;
 let evacuateHavenCallback = null;
+let voteHazardCallback = null;
 
 // Premium Basemap Tile Providers (Ultra-fast, mobile optimized)
 export const BASEMAPS = {
@@ -57,6 +58,49 @@ export const HAZARD_COLORS = {
   collapse:  '#e11d48',
 };
 
+// How each provenance class is drawn. Anything not issued by an authority must look
+// visibly different from something that was.
+/** Strip anything that could close an attribute or open a tag. */
+function escapeText(value) {
+  return String(value ?? '').replace(/[<>&"']/g, '');
+}
+
+/**
+ * Allow only http(s) links out of a hazard record.
+ *
+ * `javascript:` and `data:` URLs in an href are script execution, and a shared report
+ * is attacker-controlled input from another device.
+ */
+function safeHttpUrl(raw) {
+  if (!raw) return '';
+  try {
+    const url = new URL(String(raw), window.location.href);
+    return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+export const PROVENANCE_STYLES = {
+  official: {
+    label: 'Official alert', labelColor: '#f8fafc',
+    weight: 3, dashArray: null, fillOpacity: 0.3,
+  },
+  community: {
+    label: 'Unconfirmed report', labelColor: '#fbbf24',
+    weight: 2, dashArray: '4, 6', fillOpacity: 0.16,
+  },
+  user: {
+    // Private to this device: nobody else sees it and nobody else is routed around it.
+    label: 'Your report — only on this device', labelColor: '#93c5fd',
+    weight: 2, dashArray: '4, 6', fillOpacity: 0.18,
+  },
+  drill: {
+    label: 'DRILL — SIMULATED, NOT REAL', labelColor: '#22d3ee', stroke: '#22d3ee',
+    weight: 3, dashArray: '2, 8', fillOpacity: 0.12,
+  },
+};
+
 export const HAZARD_SVG_ICONS = {
   closure: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#dc2626" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`,
   wildfire: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#ea580c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>`,
@@ -86,9 +130,10 @@ function divIcon(cls, size = [40, 40], innerHtml = '') {
 
 // --- Init Map ---------------------------------------------------------------
 
-export function initMap(onMapTap, onHazardDelete, onEvacuateHaven) {
+export function initMap(onMapTap, onHazardDelete, onEvacuateHaven, onHazardVote) {
   deleteHazardCallback = onHazardDelete;
   evacuateHavenCallback = onEvacuateHaven;
+  voteHazardCallback = onHazardVote;
 
   map = L.map('map', {
     zoomControl: false,
@@ -291,16 +336,24 @@ export function addSafeHavenLayer(haven) {
   // Popup
   const popupDiv = document.createElement('div');
   popupDiv.className = 'haven-popup-content';
-  const capText = haven.capacity ? `<span class="haven-cap-badge">Cap: ${haven.capacity}</span>` : '';
+  const capText = haven.capacity ? `<span class="haven-cap-badge">Cap: ${Number(haven.capacity) || 0}</span>` : '';
+  // "VERIFIED" was shown for anything that simply had no hazard next to it, which is
+  // not what the word means and not what the API says. `verified` is true only when a
+  // shelter has been cross-checked against an authoritative list; OSM says a building
+  // exists, not that anyone has opened it.
   const statusBadge = isCompromised
-    ? `<div class="haven-status-alert">Threat Near: ${haven.compromised_reason || 'Hazard proximity'}</div>`
-    : `<div class="haven-status-good">VERIFIED SAFE HAVEN</div>`;
+    ? `<div class="haven-status-alert">Threat Near: ${escapeText(haven.compromised_reason) || 'Hazard proximity'}</div>`
+    : (haven.verified
+      ? `<div class="haven-status-good">CONFIRMED OPEN BY AN AUTHORITY</div>`
+      : `<div class="haven-status-unconfirmed">${haven.visibility === 'private'
+        ? 'ADDED BY YOU — ONLY ON THIS DEVICE'
+        : 'MAPPED SHELTER — NOT CONFIRMED OPEN'}</div>`);
 
   popupDiv.innerHTML = `
     <div class="haven-popup-header">
-      <div class="haven-popup-type">${haven.type.toUpperCase().replace('_', ' ')}</div>
-      <h4 class="haven-popup-name">${haven.name}</h4>
-      ${haven.address ? `<div class="haven-popup-address">${haven.address}</div>` : ''}
+      <div class="haven-popup-type">${escapeText(haven.type).toUpperCase().replace('_', ' ')}</div>
+      <h4 class="haven-popup-name"></h4>
+      ${haven.address ? '<div class="haven-popup-address"></div>' : ''}
     </div>
     ${statusBadge}
     <div class="haven-popup-meta">
@@ -310,6 +363,11 @@ export function addSafeHavenLayer(haven) {
       ${isCompromised ? 'Route Compromised' : 'Evacuate to this Haven'}
     </button>
   `;
+
+  // Names and addresses of user-added shelters are free text; insert them as text.
+  popupDiv.querySelector('.haven-popup-name').textContent = haven.name || 'Safe haven';
+  const addressNode = popupDiv.querySelector('.haven-popup-address');
+  if (addressNode) addressNode.textContent = haven.address;
 
   popupDiv.querySelector('.btn-haven-evacuate-tap')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -403,45 +461,107 @@ export function addHazardLayer(zone) {
   const latlngs = zone.coordinates.map((c) => [c.lat, c.lon]);
   const color = HAZARD_COLORS[zone.hazard_type] ?? '#dc2626';
   const iconSvg = HAZARD_SVG_ICONS[zone.hazard_type] ?? HAZARD_SVG_ICONS.debris;
-  const sourceLabel = zone.source ? `[${zone.source.toUpperCase()}]` : '';
+
+  // Provenance drives the styling. Previously a fabricated hazard and a live National
+  // Weather Service alert rendered identically, which made the map untrustworthy in
+  // the one situation where it has to be trusted.
+  const provenance = zone.provenance || 'user';
+  const style = PROVENANCE_STYLES[provenance] || PROVENANCE_STYLES.user;
 
   const poly = L.polygon(latlngs, {
-    color,
+    color: style.stroke || color,
     fillColor: color,
-    fillOpacity: 0.28,
-    weight: 2.4,
-    dashArray: '6, 5',
+    fillOpacity: style.fillOpacity,
+    weight: style.weight,
+    dashArray: style.dashArray,
+    className: `hazard-zone hazard-provenance-${provenance}`,
   }).addTo(map);
 
   // Mobile popup for inspecting and deleting the hazard
   const popupDiv = document.createElement('div');
   popupDiv.className = 'hazard-popup-content';
   const bufferText = zone.buffer_meters > 0
-    ? `<div style="font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Safety Buffer: +${zone.buffer_meters}m</div>`
+    ? `<div style="font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Safety Buffer: +${Number(zone.buffer_meters) || 0}m</div>`
     : '';
+
+  // Names and descriptions are free text. Once reports can be shared between devices,
+  // that text arrives from someone else, so it is inserted as text and never as
+  // markup. The placeholders below are filled in with textContent after the template
+  // is applied; only values this file controls are interpolated into the HTML.
   const descText = zone.description
-    ? `<div style="font-size: 12px; color: #cbd5e1; margin-bottom: 6px; line-height: 1.3;">${zone.description}</div>`
+    ? '<div class="hazard-popup-desc"></div>'
+    : '';
+
+  // Likewise the link: `javascript:` and `data:` URLs are as good as script injection.
+  const safeUrl = safeHttpUrl(zone.source_url);
+  const sourceText = safeUrl
+    ? '<a class="hazard-source-link" target="_blank" rel="noopener noreferrer">View the official alert →</a>'
+    : '';
+
+  // A shared community report can be vouched for or marked clear by anyone but its
+  // own reporter. Official alerts are not put to a vote, and a private report has
+  // nobody else to vote on it.
+  const isCommunity = provenance === 'community' && !zone.mine && !zone.is_offline_pending;
+  const voteRow = isCommunity
+    ? `<div class="hazard-vote-row">
+         <button class="btn-hazard-confirm" type="button" aria-pressed="${zone.my_vote === 'confirm'}">Still there</button>
+         <button class="btn-hazard-deny" type="button" aria-pressed="${zone.my_vote === 'deny'}">It is clear</button>
+       </div>`
+    : '';
+  const voteCounts = provenance === 'community'
+    ? `<div class="hazard-vote-counts">${zone.confirmations || 0} confirmed &middot; ${zone.denials || 0} say clear</div>`
+    : '';
+  const pendingNote = zone.is_offline_pending
+    ? `<div class="hazard-pending-note">Saved on this device &mdash; will upload when you are back online.</div>`
+    : '';
+  // Only the reporter can delete a report, so only the reporter is offered the button.
+  const canDelete = zone.mine !== false || zone.is_offline_pending || provenance === 'drill';
+  const deleteRow = canDelete
+    ? `<button class="btn-hazard-del-tap" data-id="${zone.hazard_id}">Remove Zone</button>`
     : '';
 
   popupDiv.innerHTML = `
     <div class="hazard-popup-header">
       <span class="hazard-popup-icon">${iconSvg}</span>
       <div>
-        <div class="hazard-popup-title">${zone.name || 'Hazard Zone'}</div>
-        <div class="hazard-popup-badge" style="color: ${color};">${zone.hazard_type.toUpperCase()} ${sourceLabel}</div>
+        <div class="hazard-popup-title"></div>
+        <div class="hazard-popup-badge" style="color: ${color};">${escapeText(zone.hazard_type).toUpperCase()}</div>
+        <div class="hazard-provenance-label" style="color: ${style.labelColor};">${style.label}</div>
       </div>
     </div>
     ${descText}
+    ${sourceText}
     ${bufferText}
-    <button class="btn-hazard-del-tap" data-id="${zone.hazard_id}">Remove Zone</button>
+    ${voteCounts}
+    ${pendingNote}
+    ${voteRow}
+    ${deleteRow}
   `;
 
-  popupDiv.querySelector('.btn-hazard-del-tap').addEventListener('click', (e) => {
+  popupDiv.querySelector('.hazard-popup-title').textContent = zone.name || 'Hazard Zone';
+  const descNode = popupDiv.querySelector('.hazard-popup-desc');
+  if (descNode) descNode.textContent = zone.description;
+  const linkNode = popupDiv.querySelector('.hazard-source-link');
+  if (linkNode) linkNode.setAttribute('href', safeUrl);
+
+  popupDiv.querySelector('.btn-hazard-del-tap')?.addEventListener('click', (e) => {
     e.stopPropagation();
     poly.closePopup();
     if (deleteHazardCallback) {
       deleteHazardCallback(zone.hazard_id);
     }
+  });
+
+  popupDiv.querySelector('.btn-hazard-confirm')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    poly.closePopup();
+    voteHazardCallback?.(zone.hazard_id, 'confirm');
+  });
+
+  popupDiv.querySelector('.btn-hazard-deny')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    poly.closePopup();
+    voteHazardCallback?.(zone.hazard_id, 'deny');
   });
 
   poly.bindPopup(popupDiv, { className: 'hazard-custom-popup', maxWidth: 260 });

@@ -1,14 +1,27 @@
 from typing import Any
+
 import networkx as nx
 import osmnx as ox
 import polyline as polyline_lib
 from shapely.geometry import LineString
 
+from graph_loader import DRIVABLE_HIGHWAYS, DRIVE_ONLY_HIGHWAYS
 from schemas import AlternativeHaven, EdgeKey, LatLon, Maneuver, SafeHaven
 from spatial import calculate_bearing, format_bearing_cardinal, get_turn_type, haversine
 
 WALK_SPEED = 1.389   # m/s  (~5 km/h)
 DRIVE_SPEED = 13.88  # m/s  (~50 km/h)
+
+
+def _edge_allowed(data: dict, mode: str) -> bool:
+    """Whether a given edge may legally be used in this travel mode."""
+    hw = data.get("highway")
+    tags = {str(h) for h in hw} if isinstance(hw, list) else ({str(hw)} if hw else set())
+    if not tags:
+        return True  # untagged synthetic edges are usable by both modes
+    if mode == "walk":
+        return not (tags & DRIVE_ONLY_HIGHWAYS)
+    return bool(tags & DRIVABLE_HIGHWAYS)
 
 
 def _build_routing_graph(
@@ -21,7 +34,14 @@ def _build_routing_graph(
     G = graph.copy()
     speed = WALK_SPEED if mode == "walk" else DRIVE_SPEED
 
-    for u, v, k, data in G.edges(keys=True, data=True):
+    # Drop edges this mode may not use, so a car is never routed down steps.
+    illegal = [
+        (edge[0], edge[1], edge[2]) for *edge, data in G.edges(keys=True, data=True)
+        if not _edge_allowed(data, mode)
+    ]
+    G.remove_edges_from(illegal)
+
+    for _u, _v, _k, data in G.edges(keys=True, data=True):
         length = data.get("length", 10.0)
         data["w"] = length / speed if mode == "walk" else data.get("travel_time", length / DRIVE_SPEED)
 
@@ -36,9 +56,26 @@ def _build_routing_graph(
     return G
 
 
-def _astar(G: nx.MultiDiGraph, src: int, dst: int, base_graph: nx.MultiDiGraph, mode: str) -> list[int]:
-    # Use max speed (33.3 m/s = 120 km/h) for drive heuristic to guarantee admissible A*
-    speed = 33.3 if mode == "drive" else WALK_SPEED
+def _astar(
+    G: nx.MultiDiGraph,
+    src: int,
+    dst: int,
+    base_graph: nx.MultiDiGraph,
+    mode: str,
+    max_speed_mps: float | None = None,
+) -> list[int]:
+    """
+    A* over travel time.
+
+    The heuristic must never overestimate, so it divides by the fastest speed any edge
+    can actually be traversed at. That figure comes from the graph itself
+    (`GraphManager.max_speed_mps`); the fallback matches the legacy constant only for
+    callers that cannot supply one.
+    """
+    if mode == "walk":
+        speed = WALK_SPEED
+    else:
+        speed = max_speed_mps if max_speed_mps and max_speed_mps > 0 else 33.3
 
     def heuristic(u: int, v: int) -> float:
         n, m = base_graph.nodes[u], base_graph.nodes[v]
@@ -90,7 +127,7 @@ def generate_maneuvers(
     current: Maneuver | None = None
     last_bearing: float | None = None
 
-    for i, (u, v) in enumerate(zip(path[:-1], path[1:])):
+    for i, (u, v) in enumerate(zip(path[:-1], path[1:], strict=True)):
         edges = graph.get_edge_data(u, v)
         if not edges:
             continue
@@ -187,27 +224,34 @@ def find_route(
     allow_fallback: bool = True,
     orig_coord: LatLon | None = None,
     dest_coord: LatLon | None = None,
+    max_speed_mps: float | None = None,
 ) -> dict:
     G = _build_routing_graph(graph, blocked_edges, mode, impassable=True)
 
+    if orig not in G or dest not in G:
+        return {
+            "success": False,
+            "error": f"No {mode} roads connect these points in the mapped area.",
+        }
+
     try:
-        path = _astar(G, orig, dest, graph, mode)
+        path = _astar(G, orig, dest, graph, mode, max_speed_mps)
         is_fallback, warning = False, None
-    except nx.NetworkXNoPath:
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
         if not (allow_fallback and blocked_edges):
             return {"success": False, "error": "No viable route found avoiding active hazards."}
         G = _build_routing_graph(graph, blocked_edges, mode, impassable=False)
         try:
-            path = _astar(G, orig, dest, graph, mode)
+            path = _astar(G, orig, dest, graph, mode, max_speed_mps)
             is_fallback = True
             warning = "Clear paths blocked — routing via lowest-risk alternative."
-        except nx.NetworkXNoPath:
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
             return {"success": False, "error": "No viable route found between origin and destination."}
 
     speed = WALK_SPEED if mode == "walk" else DRIVE_SPEED
     total_time = total_dist = 0.0
 
-    for u, v in zip(path[:-1], path[1:]):
+    for u, v in zip(path[:-1], path[1:], strict=True):
         edges = G.get_edge_data(u, v)
         if edges:
             best = min(edges.values(), key=lambda e: e.get("w", float("inf")))
@@ -249,25 +293,29 @@ def find_fastest_route_to_safety(
     the globally fastest and safest evacuation route avoiding all active hazards.
     """
     if not safe_candidates:
-        # Fallback: create emergency perimeter haven
-        d_lat, d_lon = 0.015, 0.015
-        safe_candidates = [
-            SafeHaven(
-                id="haven-auto-perimeter",
-                name="Perimeter Safe Clearance Zone",
-                type="perimeter_exit",
-                location=LatLon(lat=round(orig_coord.lat + d_lat, 6), lon=round(orig_coord.lon + d_lon, 6)),
-                address="Clear Zone outside Hazard Influence",
-                capacity=None,
-                is_compromised=False,
-            )
-        ]
+        # Previously this invented a "Perimeter Safe Clearance Zone" at a fixed offset
+        # from the user and routed them to it. That is a fabricated destination with no
+        # basis in the world, which is exactly the failure mode this product cannot have.
+        return {
+            "success": False,
+            "error": (
+                "No safe haven is available in the downloaded area. All known havens are "
+                "either compromised by active hazards or outside the mapped region."
+            ),
+        }
 
-    orig_node = graph_manager.nearest_node(orig_coord.lon, orig_coord.lat)
+    orig_node = graph_manager.nearest_node(orig_coord.lon, orig_coord.lat, mode=mode)
     candidate_results = []
+    max_speed = getattr(graph_manager, "max_speed_mps", None)
+    # A haven the graph does not actually reach cannot be routed to honestly. Snapping
+    # it to the nearest boundary node produces a route that claims to arrive at a
+    # hospital kilometres away, so such havens are excluded outright.
+    haven_tolerance_m = 400.0
 
     for haven in safe_candidates:
-        dest_node = graph_manager.nearest_node(haven.location.lon, haven.location.lat)
+        if not graph_manager.contains(haven.location.lon, haven.location.lat, haven_tolerance_m):
+            continue
+        dest_node = graph_manager.nearest_node(haven.location.lon, haven.location.lat, mode=mode)
         res = find_route(
             graph,
             orig_node,
@@ -277,6 +325,7 @@ def find_fastest_route_to_safety(
             allow_fallback=allow_fallback,
             orig_coord=orig_coord,
             dest_coord=haven.location,
+            max_speed_mps=max_speed,
         )
         if res["success"]:
             candidate_results.append({
@@ -290,7 +339,10 @@ def find_fastest_route_to_safety(
     if not candidate_results:
         return {
             "success": False,
-            "error": "No viable evacuation route to any safe haven could be constructed avoiding active hazard zones.",
+            "error": (
+                "No safe haven inside the mapped area can be reached. Download coverage "
+                "for this region, or move to an area with downloaded coverage."
+            ),
         }
 
     # Rank: prefer non-fallback routes first, then lowest travel time
@@ -340,7 +392,7 @@ def path_to_coords(
     """Walk node pairs, preferring road geometry over straight lines."""
     points: list[LatLon] = []
 
-    for i, (u, v) in enumerate(zip(path[:-1], path[1:])):
+    for i, (u, v) in enumerate(zip(path[:-1], path[1:], strict=True)):
         edges = graph.get_edge_data(u, v)
         geom: LineString | None = None
         if edges:

@@ -1,0 +1,20 @@
+{
+  "regions": [
+    {
+      "id": "test-region",
+      "name": "Test Region",
+      "bounds": {
+        "min_lat": 40.705087,
+        "max_lat": 40.711904,
+        "min_lon": -74.015501,
+        "max_lon": -74.006493
+      },
+      "bytes": 83394,
+      "node_count": 1296,
+      "edge_count": 3507,
+      "haven_count": 0,
+      "sha256": "da57b8b077ac7207b0e143ee5be520b431301a062dd85561cda6823c75664b96",
+      "format_version": 1
+    }
+  ]
+}

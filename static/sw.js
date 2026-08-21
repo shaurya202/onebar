@@ -1,4 +1,4 @@
-const CACHE_NAME = 'onebar-v2';
+const CACHE_NAME = 'onebar-v5';
 
 const SHELL = [
   '/',
@@ -9,9 +9,20 @@ const SHELL = [
   '/static/js/map.js',
   '/static/js/haptics.js',
   '/static/js/offline-store.js',
-  '/static/js/tile-cache.js',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  '/static/js/config.js',
+  '/static/js/device.js',
+  '/static/js/contacts.js',
+  '/static/js/focus-trap.js',
+  '/static/js/search.js',
+  '/static/js/trip-store.js',
+  '/static/js/pack-search.js',
+  '/static/js/pack-format.js',
+  '/static/js/pack-store.js',
+  '/static/js/route-engine.js',
+  '/static/js/router-worker.js',
+  '/static/js/offline-router.js',
+  '/static/vendor/leaflet/leaflet.css',
+  '/static/vendor/leaflet/leaflet.js',
 ];
 
 // Install: cache app shell
@@ -47,12 +58,6 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Leaflet CDN assets: cache-first
-  if (url.hostname === 'unpkg.com') {
-    e.respondWith(cacheFirst(request));
-    return;
-  }
-
   // Static assets and shell: cache-first
   if (url.pathname.startsWith('/static/') || url.pathname === '/' || url.pathname === '/manifest.webmanifest') {
     e.respondWith(cacheFirst(request));
@@ -69,7 +74,11 @@ self.addEventListener('fetch', (e) => {
 });
 
 async function cacheFirst(request) {
-  const cached = await caches.match(request);
+  // `ignoreSearch`: the manifest's home-screen shortcuts open "/?action=evacuate" and
+  // friends, and an exact-URL match never finds the cached "/" — so the one-tap
+  // evacuate shortcut rendered an "Offline" error page in exactly the situation it
+  // exists for.
+  const cached = await caches.match(request, { ignoreSearch: true });
   if (cached) return cached;
   try {
     const response = await fetch(request);

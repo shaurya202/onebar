@@ -1,13 +1,10 @@
-import json
 import logging
-import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-import requests
-from shapely.geometry import shape, Polygon, MultiPolygon
 
-from schemas import HazardZone, LatLon
-from spatial import create_circle_polygon, from_shapely_polygon, to_shapely_polygon
+import requests
+
+from schemas import LatLon
 
 logger = logging.getLogger("onebar.hazard_feed")
 
@@ -77,6 +74,11 @@ def fetch_nws_alerts(center_lat: float, center_lon: float) -> list[dict[str, Any
                     poly_coords = _extract_polygon_coords_from_geojson_geom(geom)
 
                 hazard_type = _classify_hazard_type(event, desc)
+                alert_url = props.get("@id") or feat.get("id")
+                observed = props.get("effective") or props.get("sent")
+                # NWS publishes when its own warning stops applying. Honouring it means
+                # an expired alert stops blocking roads even if nothing re-syncs.
+                expires = props.get("expires") or props.get("ends")
 
                 if poly_coords and len(poly_coords) >= 3:
                     hazards.append({
@@ -89,6 +91,10 @@ def fetch_nws_alerts(center_lat: float, center_lon: float) -> list[dict[str, Any
                         "source": "nws",
                         "severity": severity,
                         "description": headline,
+                        "provenance": "official",
+                        "source_url": alert_url,
+                        "observed_at": observed,
+                        "expires_at": expires,
                     })
                 else:
                     radius = 350.0 if severity == "extreme" else (200.0 if severity == "severe" else 100.0)
@@ -102,6 +108,10 @@ def fetch_nws_alerts(center_lat: float, center_lon: float) -> list[dict[str, Any
                         "source": "nws",
                         "severity": severity,
                         "description": headline,
+                        "provenance": "official",
+                        "source_url": alert_url,
+                        "observed_at": observed,
+                        "expires_at": expires,
                     })
     except Exception as e:
         logger.info(f"NWS API fetch not available or timed out: {e}")
@@ -132,6 +142,11 @@ def fetch_usgs_earthquakes(center_lat: float, center_lon: float, radius_km: floa
                 if len(coords) >= 2:
                     eq_lon, eq_lat = float(coords[0]), float(coords[1])
                     radius_m = max(100.0, min(5000.0, mag * 250.0))
+                    quake_time = props.get("time")
+                    observed = (
+                        datetime.fromtimestamp(quake_time / 1000.0, UTC).isoformat()
+                        if isinstance(quake_time, (int, float)) else None
+                    )
                     hazards.append({
                         "name": f"[USGS] {title}",
                         "hazard_type": "collapse",
@@ -142,6 +157,9 @@ def fetch_usgs_earthquakes(center_lat: float, center_lon: float, radius_km: floa
                         "source": "usgs",
                         "severity": "extreme" if mag >= 5.0 else ("severe" if mag >= 3.5 else "moderate"),
                         "description": f"Magnitude {mag:.1f} seismic event reported by USGS.",
+                        "provenance": "official",
+                        "source_url": props.get("url"),
+                        "observed_at": observed,
                     })
     except Exception as e:
         logger.info(f"USGS Earthquake API fetch not available or timed out: {e}")
@@ -168,6 +186,7 @@ def fetch_nasa_eonet(bounds: dict[str, float] | None = None) -> list[dict[str, A
                 cat_str = " ".join(cats)
                 hazard_type = _classify_hazard_type(cat_str, title)
 
+                event_url = ev.get("link") or (ev.get("sources") or [{}])[0].get("url")
                 geometries = ev.get("geometry", [])
                 for g in geometries:
                     g_type = g.get("type")
@@ -183,6 +202,9 @@ def fetch_nasa_eonet(bounds: dict[str, float] | None = None) -> list[dict[str, A
                             "source": "eonet",
                             "severity": "severe",
                             "description": f"NASA EONET tracked {cat_str}: {title}",
+                            "provenance": "official",
+                            "source_url": event_url,
+                            "observed_at": g.get("date"),
                         })
                         break
                     elif g_type in ["Polygon", "MultiPolygon"]:
@@ -198,6 +220,9 @@ def fetch_nasa_eonet(bounds: dict[str, float] | None = None) -> list[dict[str, A
                                 "source": "eonet",
                                 "severity": "severe",
                                 "description": f"NASA EONET tracked {cat_str}: {title}",
+                                "provenance": "official",
+                                "source_url": event_url,
+                                "observed_at": g.get("date"),
                             })
                             break
     except Exception as e:
@@ -205,44 +230,52 @@ def fetch_nasa_eonet(bounds: dict[str, float] | None = None) -> list[dict[str, A
     return hazards
 
 
+DRILL_PREFIX = "[DRILL — NOT REAL]"
+
+
 def generate_scenario_hazards(center_lat: float, center_lon: float, bounds: dict[str, float] | None = None) -> list[dict[str, Any]]:
     """
-    Generate realistic, spatially consistent emergency disaster hazard zones around the center
-    for testing, offline scenarios, or crisis drill modes.
+    Generate simulated hazard zones around a centre point for evacuation drills and
+    offline demos.
+
+    These are FABRICATED. They are reachable only when a caller explicitly opts in via
+    `drill_mode`, and every record is stamped `provenance="drill"` with a name that
+    cannot be mistaken for an authority. Never use these as a fallback for an empty
+    feed: "no active alerts" is the truthful answer and is what users need to hear.
     """
     d_lat = 0.0018
     d_lon = 0.0022
 
     scenarios = [
         {
-            "name": "[Crisis API] Flash Flood Surge Zone",
+            "name": f"{DRILL_PREFIX} Flash Flood Surge Zone",
             "hazard_type": "flood",
             "center": LatLon(lat=round(center_lat + d_lat * 0.7, 6), lon=round(center_lon - d_lon * 0.5, 6)),
             "radius_meters": 95.0,
             "buffer_meters": 20.0,
-            "source": "crisis_feed",
+            "source": "drill",
             "severity": "extreme",
-            "description": "Rapid urban inundation detected. Water levels rising.",
+            "description": "SIMULATED DRILL SCENARIO — not a real event. Rapid urban inundation.",
         },
         {
-            "name": "[Emergency Feed] Downed High-Voltage Line",
+            "name": f"{DRILL_PREFIX} Downed High-Voltage Line",
             "hazard_type": "powerline",
             "center": LatLon(lat=round(center_lat - d_lat * 0.8, 6), lon=round(center_lon + d_lon * 0.6, 6)),
             "radius_meters": 65.0,
             "buffer_meters": 15.0,
-            "source": "crisis_feed",
+            "source": "drill",
             "severity": "severe",
-            "description": "Live electrical transmission cables down across roadway.",
+            "description": "SIMULATED DRILL SCENARIO — not a real event. Cables down across roadway.",
         },
         {
-            "name": "[Municipal Feed] Structural Debris & Road Blockade",
+            "name": f"{DRILL_PREFIX} Structural Debris & Road Blockade",
             "hazard_type": "debris",
             "center": LatLon(lat=round(center_lat + d_lat * 0.4, 6), lon=round(center_lon + d_lon * 0.9, 6)),
             "radius_meters": 75.0,
             "buffer_meters": 10.0,
-            "source": "crisis_feed",
+            "source": "drill",
             "severity": "moderate",
-            "description": "Collapsed masonry and structural barrier blocking thoroughfare.",
+            "description": "SIMULATED DRILL SCENARIO — not a real event. Collapsed masonry blocking road.",
         },
     ]
 
@@ -250,16 +283,19 @@ def generate_scenario_hazards(center_lat: float, center_lon: float, bounds: dict
     p2 = LatLon(lat=round(center_lat - d_lat * 0.9, 6), lon=round(center_lon - d_lon * 0.8, 6))
     p3 = LatLon(lat=round(center_lat - d_lat * 1.6, 6), lon=round(center_lon - d_lon * 0.5, 6))
     scenarios.append({
-        "name": "[Incident API] Active Wildfire Perimeter",
+        "name": f"{DRILL_PREFIX} Active Wildfire Perimeter",
         "hazard_type": "wildfire",
         "coordinates": [p1, p2, p3],
         "center": None,
         "radius_meters": None,
         "buffer_meters": 25.0,
-        "source": "crisis_feed",
+        "source": "drill",
         "severity": "extreme",
-        "description": "Rapidly advancing thermal front with zero road visibility.",
+        "description": "SIMULATED DRILL SCENARIO — not a real event. Advancing thermal front.",
     })
+
+    for s in scenarios:
+        s["provenance"] = "drill"
 
     return scenarios
 
@@ -269,14 +305,18 @@ def fetch_all_external_hazards(
     center_lon: float,
     bounds: dict[str, float] | None = None,
     sources: list[str] | None = None,
-    include_simulation_if_empty: bool = True,
+    drill_mode: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """
-    Query all requested external APIs, parse features into normalized hazard structures,
-    and return the aggregated hazard items and successful source names.
+    Query the requested external APIs, normalise their features, and return the
+    aggregated hazards plus the names of sources that actually returned something.
+
+    Returning an empty list is a valid and common outcome — it means there are no
+    active alerts for that location. It must never be padded with simulated data.
+    Drill hazards are added only when `drill_mode` is explicitly True.
     """
     if sources is None:
-        sources = ["nws", "usgs", "eonet", "simulation"]
+        sources = ["nws", "usgs", "eonet"]
 
     active_sources: list[str] = []
     collected_hazards: list[dict[str, Any]] = []
@@ -299,9 +339,11 @@ def fetch_all_external_hazards(
             collected_hazards.extend(eonet_hazards)
             active_sources.append("eonet")
 
-    if "simulation" in sources or (include_simulation_if_empty and len(collected_hazards) == 0):
-        scenario_hazards = generate_scenario_hazards(center_lat, center_lon, bounds)
-        collected_hazards.extend(scenario_hazards)
-        active_sources.append("crisis_feed")
+    for item in collected_hazards:
+        item.setdefault("provenance", "official")
+
+    if drill_mode:
+        collected_hazards.extend(generate_scenario_hazards(center_lat, center_lon, bounds))
+        active_sources.append("drill")
 
     return collected_hazards, active_sources

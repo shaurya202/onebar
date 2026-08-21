@@ -76,3 +76,25 @@ ehthumbs.db
 # Project Caches
 cache/
 .gemini/
+
+# Runtime state (rebuilt at startup; must never be committed as if it were real data)
+hazards_store.json
+safe_havens_store.json
+*.obp
+packs/
+region_graph.graphml
+
+# Android signing secrets — never commit
+keystore.properties
+*.keystore
+*.jks
+
+# Per-deployment salt for hashing device identifiers (see app/device.py).
+# Generated on first run and must never be committed: it is what keeps a reporter's
+# opaque key from being reproducible by anyone who reads the repository.
+.onebar_device_salt
+
+# ...except the checked-in test pack. The route-parity test and the pack-mode boot
+# check both read it, and CI fails if they skip.
+!tests/fixtures/packs/
+!tests/fixtures/packs/*.obp

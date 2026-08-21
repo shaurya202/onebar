@@ -5,8 +5,7 @@
   "bundledWebRuntime": false,
   "server": {
     "androidScheme": "https",
-    "iosScheme": "ionic",
-    "cleartext": true
+    "iosScheme": "https"
   },
   "plugins": {
     "StatusBar": {
@@ -15,7 +14,9 @@
       "overlaysWebView": true
     },
     "Geolocation": {
-      "permissions": ["location"]
+      "permissions": [
+        "location"
+      ]
     },
     "SplashScreen": {
       "launchShowDuration": 1200,
@@ -27,13 +28,14 @@
     }
   },
   "android": {
-    "allowMixedContent": true,
+    "allowMixedContent": false,
     "captureInput": true,
-    "webContentsDebuggingEnabled": true
+    "webContentsDebuggingEnabled": false
   },
   "ios": {
     "contentInset": "always",
     "scheme": "OneBar",
+    "_comment_limitsNavigationsToAppBoundDomains": "Left off deliberately. Enabling it requires a WKAppBoundDomains array in Info.plist, and with none declared WKWebView treats no domain as app-bound: map tiles, a remote ONEBAR_API_BASE, region-pack downloads and the tel:/sms: handoffs in the SOS screen would all be blocked, and evaluateJavaScript is disabled so plugin callbacks stop arriving. This app legitimately loads third-party map tiles, so app-bound domains is the wrong mechanism for it.",
     "limitsNavigationsToAppBoundDomains": false
   }
 }
