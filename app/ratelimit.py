@@ -32,6 +32,10 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "hazard_vote": Limit(count=60, window_seconds=60.0),
     "feed_sync": Limit(count=10, window_seconds=60.0),
     "geocode": Limit(count=60, window_seconds=60.0),
+    "push_write": Limit(count=30, window_seconds=60.0),
+    # One build can hammer Overpass for minutes and tens of megabytes; a handful per
+    # device per hour is plenty for "download where I am".
+    "pack_build": Limit(count=5, window_seconds=3600.0),
     # A device id is minted by the client, so rotating it mints a fresh allowance and
     # the per-device limit alone stops nothing. Every bucket is therefore also charged
     # against the peer address, at a ceiling high enough that a household or a café
@@ -40,6 +44,8 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "hazard_vote.peer": Limit(count=180, window_seconds=60.0),
     "feed_sync.peer": Limit(count=40, window_seconds=60.0),
     "geocode.peer": Limit(count=240, window_seconds=60.0),
+    "push_write.peer": Limit(count=120, window_seconds=60.0),
+    "pack_build.peer": Limit(count=30, window_seconds=3600.0),
 }
 
 

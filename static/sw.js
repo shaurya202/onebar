@@ -1,4 +1,4 @@
-const CACHE_NAME = 'onebar-v5';
+const CACHE_NAME = 'onebar-v6';
 
 const SHELL = [
   '/',
@@ -21,6 +21,8 @@ const SHELL = [
   '/static/js/route-engine.js',
   '/static/js/router-worker.js',
   '/static/js/offline-router.js',
+  '/static/js/voice.js',
+  '/static/js/push-client.js',
   '/static/vendor/leaflet/leaflet.css',
   '/static/vendor/leaflet/leaflet.js',
 ];
@@ -91,3 +93,40 @@ async function cacheFirst(request) {
     return cached || new Response('Offline', { status: 503 });
   }
 }
+
+// --- Push notifications ------------------------------------------------------
+
+// A push must always show a notification (`userVisibleOnly` is the browser's term
+// for this deal). Even an unparseable payload shows a generic alert rather than
+// nothing, or the browser revokes the subscription.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try {
+    data = e.data ? e.data.json() : {};
+  } catch {
+    data = { title: 'OneBar', body: 'Tap to open OneBar.' };
+  }
+
+  e.waitUntil(self.registration.showNotification(data.title || 'OneBar hazard alert', {
+    body: data.body || 'A new hazard was reported in your area.',
+    tag: data.tag || 'onebar-hazard',
+    renotify: Boolean(data.tag),
+    data: { hazard_id: data.hazard_id || null },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const hazardId = e.notification.data?.hazard_id;
+  e.waitUntil((async () => {
+    const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windowClients) {
+      if ('focus' in client && 'postMessage' in client) {
+        client.postMessage({ type: 'open-hazard', hazard_id: hazardId });
+        return client.focus();
+      }
+    }
+    const target = hazardId ? `/?action=hazard&hazard=${encodeURIComponent(hazardId)}` : '/?action=hazard';
+    return self.clients.openWindow(target);
+  })());
+});

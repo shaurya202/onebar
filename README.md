@@ -71,7 +71,17 @@ During natural disasters (wildfires, flash floods, earthquakes, severe storms) a
 4. **Emergency SOS Beacon**:
    - Generates compact, low-bandwidth SMS payloads containing precise GPS coordinates, map links, active hazard counts, and navigation ETA for degraded cellular links.
 5. **Offline Map Pre-Caching**:
-   - Pre-caches map tiles directly into IndexedDB storage for total cellular blackout scenarios.
+   - Downloads compact routable region packs (`.obp`) holding the road graph, so evacuation routing runs entirely on-device with no signal at all.
+   - Caches map tiles and the app shell through the Service Worker for degraded-network resilience; hazards and queued reports persist in IndexedDB.
+
+6. **Nearby-Hazard Push Alerts**:
+   - Optional Web Push subscription watches an area around your location; official feed alerts and shared community reports wake subscribed devices even with the app closed. Accountless: bound to the same opaque device key as reports, and the push relay prunes dead subscriptions automatically.
+
+7. **Voice Turn-by-Turn Guidance**:
+   - Spoken prompts ahead of each maneuver using on-device speech synthesis (works offline), with route-progress tracking that tolerates skipped GPS fixes. Toggle in Layers > Display.
+
+8. **On-Demand Region Packs**:
+   - Deployments may enable `ONEBAR_ON_DEMAND_PACKS` so users outside published coverage can request a pack built around their location (rate limited per device).
 
 ---
 

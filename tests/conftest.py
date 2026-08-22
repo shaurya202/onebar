@@ -39,14 +39,18 @@ def isolated_stores(tmp_path_factory):
     """Redirect all persistence and pin the graph to the committed test fixture."""
     tmp = tmp_path_factory.mktemp("onebar_state")
     keys = (
-        "ONEBAR_HAZARDS_FILE", "ONEBAR_HAVENS_FILE", "ONEBAR_CACHE",
+        "ONEBAR_HAZARDS_FILE", "ONEBAR_HAVENS_FILE", "ONEBAR_PUSH_FILE", "ONEBAR_CACHE",
         "ONEBAR_HAVEN_DISCOVERY", "ONEBAR_DEVICE_SALT", "ONEBAR_GEOCODING",
-        "ONEBAR_ADMIN_TOKEN",
+        "ONEBAR_ADMIN_TOKEN", "ONEBAR_VAPID_PRIVATE_KEY", "ONEBAR_VAPID_PUBLIC_KEY",
+        "ONEBAR_PACK_DIR", "ONEBAR_ON_DEMAND_PACKS",
     )
     previous = {k: os.environ.get(k) for k in keys}
 
     os.environ["ONEBAR_HAZARDS_FILE"] = str(tmp / "hazards_store.json")
     os.environ["ONEBAR_HAVENS_FILE"] = str(tmp / "safe_havens_store.json")
+    os.environ["ONEBAR_PUSH_FILE"] = str(tmp / "push_subscriptions.json")
+    # Pack builds (on-demand) must write into the sandbox too, never into packs/.
+    os.environ["ONEBAR_PACK_DIR"] = str(tmp / "packs")
     # Pin the graph so results don't depend on whatever cache a developer has locally.
     os.environ["ONEBAR_CACHE"] = FIXTURE_GRAPH
     # Keep startup off the network so the suite is hermetic.

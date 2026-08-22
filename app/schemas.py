@@ -293,3 +293,67 @@ class CoverageError(BaseModel):
     outside_coverage: bool = True
     distance_km: float
     bounds: dict[str, float]
+
+
+# --- Push notifications ------------------------------------------------------
+
+class WatchArea(BaseModel):
+    """The rectangle a subscribed device asked to be alerted about."""
+    min_lat: float = Field(..., ge=-90.0, le=90.0)
+    max_lat: float = Field(..., ge=-90.0, le=90.0)
+    min_lon: float = Field(..., ge=-180.0, le=180.0)
+    max_lon: float = Field(..., ge=-180.0, le=180.0)
+
+    @model_validator(mode="after")
+    def _min_below_max(self):
+        if self.min_lat > self.max_lat or self.min_lon > self.max_lon:
+            raise ValueError("min corner must not exceed max corner")
+        return self
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(..., min_length=1, max_length=512)
+    auth: str = Field(..., min_length=1, max_length=512)
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str = Field(..., min_length=1, max_length=1024)
+    keys: PushKeys
+    watch_area: WatchArea | None = None
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str = Field(..., min_length=1, max_length=1024)
+
+
+class PushSubscriptionResponse(BaseModel):
+    endpoint: str
+    watch_area: WatchArea | None
+    created_at: str
+
+
+class PushListResponse(BaseModel):
+    subscriptions: list[PushSubscriptionResponse]
+    total: int
+
+
+class VapidPublicKeyResponse(BaseModel):
+    enabled: bool
+    public_key: str | None = None
+
+
+# --- On-demand region packs ---------------------------------------------------
+
+class PackBuildRequest(BaseModel):
+    point: LatLon
+    radius_km: float = Field(5.0, ge=0.5, le=20.0)
+    name: str | None = Field(None, max_length=120)
+
+
+class PackJobResponse(BaseModel):
+    job_id: str
+    status: Literal["building", "ready", "error"]
+    region_id: str | None = None
+    name: str | None = None
+    error: str | None = None
+    download_url: str | None = None

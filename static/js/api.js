@@ -208,6 +208,23 @@ export const api = {
     add: (data) => req('/safe-havens', { method: 'POST', ...json(data) }),
   },
 
+  /** Nearby-hazard alert subscriptions. The device header scopes every call. */
+  push: {
+    config: () => req('/push/vapid-public-key'),
+    subscriptions: () => req('/push/subscriptions'),
+    subscribe: (subscription) =>
+      req('/push/subscriptions', { method: 'POST', ...json(subscription) }),
+    unsubscribe: (endpoint) =>
+      req('/push/subscriptions', { method: 'DELETE', ...json({ endpoint }) }),
+  },
+
+  /** On-demand region pack builds. Operator-gated server-side. */
+  packs: {
+    requestBuild: (point, radius_km = 10, name = null) =>
+      req('/packs/request', { method: 'POST', ...json({ point, radius_km, name }) }),
+    jobStatus: (jobId) => req(`/packs/jobs/${jobId}`),
+  },
+
   /** Destination search. Offline map hits come back first and are marked as such. */
   geocode: (q, { lat = null, lon = null, limit = 8 } = {}) => {
     const params = new URLSearchParams({ q, limit: String(limit) });

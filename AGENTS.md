@@ -227,24 +227,34 @@ When dividing tasks across agents or contributors, assign tasks according to the
     "allow_penalty_fallback": true
   }
   ```
-- **Response (200):**
-  ```json
-  {
-    "success": true,
-    "coordinates": [
-      {"lat": 40.7128, "lon": -74.0060},
-      {"lat": 40.7135, "lon": -74.0042},
-      {"lat": 40.7200, "lon": -73.9950}
-    ],
-    "polyline": "_p~iF~ps|U_ulLnnqC_mqNvxq`@",
-    "total_travel_time_seconds": 342.5,
-    "total_distance_meters": 1820.4,
-    "blocked_edges_avoided": 12,
-    "is_fallback": false,
-    "warning": null
-  }
-  ```
-- **Response (409 Conflict):** `{"detail": "No viable route found avoiding active hazards."}`
+- **Response (200):** includes `coordinates`, optional `polyline`, `total_travel_time_seconds`,
+  `total_distance_meters`, `blocked_edges_avoided`, `is_fallback`, `warning` and a
+  `maneuvers: [{type, instruction, distance_meters, location}]` turn-by-turn list.
+- **Response (422):** coordinate outside loaded graph (`outside_coverage`) or unsupported mode.
+- **Response (409 Conflict):** no passable route.
+
+The contract below is the *full* current surface — this file's earlier copy predates most of it.
+
+| Endpoint | Method | Notes |
+| --- | --- | --- |
+| `/health`, `/region` | GET | Service liveness; graph summary incl. bounds & counts. |
+| `/hazards` | POST/GET | Create (device-attributed, private unless `share:true`); list scoped to caller. |
+| `/hazards/{id}` | GET/DELETE | Fetch one; delete own report (operator token for others). |
+| `/hazards/{id}/confirm`, `/deny` | POST | Community voting; enough denials retire a shared report. |
+| `/hazards/drill` | DELETE | Retire drill fixtures (own, or all with operator token). |
+| `/hazards` | DELETE | Wipe-all — **operator token only**, disabled unless `ONEBAR_ADMIN_TOKEN`. |
+| `/hazards/sync-api` | POST | Pull NWS / USGS / EONET feeds; `drill_mode` scopes simulated hazards to the device. |
+| `/safe-havens` | GET/POST/DELETE | Shelters; compromise detection vs live hazards. |
+| `/geocode`, `/geocode/reverse` | GET | Offline street index first, Nominatim second. |
+| `/route/safety` | POST | Multi-haven evacuation evaluation + alternatives. |
+| `/push/vapid-public-key` | GET | `{enabled, public_key}` for Web Push hazard alerts. |
+| `/push/subscriptions` | POST/GET/DELETE | Register/list/remove push subscriptions + watched area; device-scoped. |
+| `/packs/index.json`, `/packs/{id}.obp` | GET | Offline pack catalogue + immutable downloads. |
+| `/packs/request`, `/packs/jobs/{job_id}` | POST/GET | On-demand pack build (needs `ONEBAR_ON_DEMAND_PACKS=1`); poll job, then download via `/packs/{region_id}.obp`. |
+
+Write endpoints require the `X-OneBar-Device` header (opaque client id, stored only as a keyed
+hash) and are rate limited per device and per network origin. Operator actions use
+`X-OneBar-Admin`.
 
 ---
 
@@ -265,6 +275,15 @@ uvicorn app.index:app --host 0.0.0.0 --port 8000 --reload
 - `ONEBAR_POINT`: Centre `"lat,lon"` decimal degrees (used with `ONEBAR_RADIUS`).
 - `ONEBAR_RADIUS`: Search radius in meters around point (default: `5000`).
 - `ONEBAR_CACHE`: Path to `.graphml` cached graph file (default: `region_graph.graphml`).
+
+### Other Environment Variables
+- `ONEBAR_HAZARDS_FILE` / `ONEBAR_HAVENS_FILE` / `ONEBAR_PUSH_FILE`: JSON persistence paths for hazards, havens and push subscriptions.
+- `ONEBAR_ADMIN_TOKEN`: enables operator endpoints when set.
+- `ONEBAR_RATE_LIMIT=0`: disable per-device rate limiting (testing only).
+- `ONEBAR_VAPID_PRIVATE_KEY` / `ONEBAR_VAPID_PUBLIC_KEY` / `ONEBAR_VAPID_SUBJECT`: enable Web Push hazard alerts.
+- `ONEBAR_ON_DEMAND_PACKS=1`: allow clients to request region packs built around their location.
+- `ONEBAR_PACK_DIR`: where published `.obp` packs live (default `packs/`).
+- `ONEBAR_ALLOWED_ORIGINS`: extra CORS origins for hosted/native deployments.
 
 ---
 

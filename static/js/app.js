@@ -6,6 +6,14 @@ import { fetchCatalogue, downloadPack, installedPacks } from './pack-store.js';
 import { routeOffline, hasOfflineCoverage, offlineHavens } from './offline-router.js';
 import { cancelSearch, searchDebounced } from './search.js';
 import { clearTrip, describeAge, flushTrip, loadTrip, saveTrip } from './trip-store.js';
+import { readVoiceSetting, writeVoiceSetting, voiceGuide, voiceSupported } from './voice.js';
+import {
+  disableHazardAlerts,
+  enableHazardAlerts,
+  pushAvailable,
+  pushState,
+  refreshWatchArea,
+} from './push-client.js';
 import {
   initMap,
   panTo,
@@ -60,6 +68,7 @@ let lastGPSAccuracy = null;
 let lastGPSHeading = null;
 let isHighContrast = false;
 let isLargeText = false;
+let isVoiceGuidance = false;
 let wakeLock = null;
 let searchResults = [];
 let searchActiveIndex = -1;
@@ -262,6 +271,8 @@ const dom = {
   // Display settings
   settingContrast:     $('btn-toggle-contrast-setting'),
   settingLargeText:    $('btn-toggle-large-text'),
+  settingVoice:        $('btn-toggle-voice-guidance'),
+  settingAlerts:       $('btn-toggle-hazard-alerts'),
 };
 
 
@@ -361,6 +372,10 @@ function handleUrlActionShortcuts() {
 function setAppState(nextState) {
   appState = nextState;
   hide(dom.banner);
+
+  if (nextState !== 'route') {
+    voiceGuide.stop();
+  }
 
   hide(dom.sheetIdle);
   hide(dom.sheetPlanner);
@@ -798,6 +813,17 @@ function startGPS() {
       const ll = { lat, lon, lng: lon };
       setUserLocation(ll, lastGPSHeading);
       dom.gpsText.textContent = accuracy < 25 ? 'Active' : `~${Math.round(accuracy)}m`;
+
+      if (appState === 'route' && currentRouteData) {
+        const spoken = voiceGuide.onPosition(lat, lon);
+        if (spoken && currentRouteData.maneuvers?.length) {
+          updateHudForSpokenPrompt(spoken);
+        }
+      }
+
+      // Keeps the push watch area honest as the device moves; exits immediately
+      // unless enough time and distance have passed since the last refresh.
+      refreshWatchArea(lat, lon);
 
       if (!origin) {
         origin = { lat, lon };
@@ -1899,6 +1925,12 @@ function routingErrorMessage(err) {
   return `Routing error: ${err.message || err}`;
 }
 
+function updateHudForSpokenPrompt(text) {
+  if (dom.hudSubInstr && text) {
+    dom.hudSubInstr.textContent = text;
+  }
+}
+
 function renderRouteDeck(result) {
   const mins = Math.max(1, Math.round(result.total_travel_time_seconds / 60));
   const km = (result.total_distance_meters / 1000).toFixed(1);
@@ -1926,6 +1958,7 @@ function renderRouteDeck(result) {
     const destHavenStr = activeDestinationHaven ? `to ${activeDestinationHaven.name.split(' ')[0]}` : '';
     const nextStep = maneuvers.length > 1 ? `Then ${maneuvers[1].instruction.toLowerCase()}` : `Evacuate ${destHavenStr}`;
     dom.hudSubInstr.textContent = `In ${distStr} • ${nextStep}`;
+    voiceGuide.route(maneuvers);
   }
 
   // Render Turn-by-Turn Maneuvers List in Bottom Sheet
@@ -2194,6 +2227,31 @@ function initDisplaySettings() {
     haptics.tap();
     toggleLargeText();
   });
+
+  if (!voiceSupported() && dom.settingVoice) {
+    dom.settingVoice.disabled = true;
+    const sub = dom.settingVoice.querySelector('.settings-row-sub');
+    if (sub) sub.textContent = 'Not available on this device';
+  } else {
+    isVoiceGuidance = readVoiceSetting();
+    applyVoiceGuidance();
+    dom.settingVoice?.addEventListener('click', () => {
+      haptics.tap();
+      toggleVoiceGuidance();
+    });
+  }
+
+  if (!pushAvailable() && dom.settingAlerts) {
+    dom.settingAlerts.disabled = true;
+    const sub = dom.settingAlerts.querySelector('.settings-row-sub');
+    if (sub) sub.textContent = 'Not available on this device';
+  } else {
+    refreshHazardAlertsRow();
+    dom.settingAlerts?.addEventListener('click', () => {
+      haptics.tap();
+      toggleHazardAlerts();
+    });
+  }
 }
 
 function applyHighContrast() {
@@ -2222,6 +2280,65 @@ function toggleLargeText() {
   toast(isLargeText ? 'Large text on' : 'Standard text size restored');
 }
 
+function applyVoiceGuidance() {
+  dom.settingVoice?.setAttribute('aria-pressed', String(isVoiceGuidance));
+}
+
+function toggleVoiceGuidance() {
+  isVoiceGuidance = !isVoiceGuidance;
+  applyVoiceGuidance();
+  writeVoiceSetting(isVoiceGuidance);
+  if (!isVoiceGuidance) {
+    voiceGuide.stop();
+  }
+  toast(isVoiceGuidance ? 'Voice guidance on' : 'Voice guidance off');
+}
+
+async function refreshHazardAlertsRow() {
+  try {
+    const state = await pushState();
+    const on = state.supported && state.subscribed;
+    dom.settingAlerts?.setAttribute('aria-pressed', String(on));
+    // A permission the user explicitly denied in browser settings can never be
+    // re-requested from the page; saying so beats a switch that silently does nothing.
+    if (state.supported && Notification.permission === 'denied') {
+      const sub = dom.settingAlerts?.querySelector('.settings-row-sub');
+      if (sub) sub.textContent = 'Blocked in browser settings';
+      dom.settingAlerts.disabled = true;
+    }
+  } catch { /* the row keeps its previous state */ }
+}
+
+async function toggleHazardAlerts() {
+  const btn = dom.settingAlerts;
+  if (!btn) return;
+  const currentlyOn = btn.getAttribute('aria-pressed') === 'true';
+  btn.disabled = true;
+  try {
+    if (currentlyOn) {
+      await disableHazardAlerts();
+      btn.setAttribute('aria-pressed', 'false');
+      toast('Hazard alerts off');
+    } else {
+      const position = (lastGPSLat !== null && lastGPSLon !== null)
+        ? { lat: lastGPSLat, lon: lastGPSLon }
+        : null;
+      // Subscribing without a position would create a watch area of nothing — the
+      // user would believe they are protected while no alert could ever reach them.
+      if (!position) throw new Error('Wait for a location fix so alerts can follow your area.');
+      await enableHazardAlerts(position);
+      btn.setAttribute('aria-pressed', 'true');
+      toast('Hazard alerts on — watching around your location');
+    }
+  } catch (err) {
+    haptics.error();
+    toast(err.message || 'Could not change hazard alerts.', 'error');
+    refreshHazardAlertsRow();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function downloadRegionForOffline() {
   // Replaces the old tile pre-cacher, which bulk-downloaded raster tiles straight from
   // tile.openstreetmap.org in violation of their usage policy — and cached them under a
@@ -2243,16 +2360,66 @@ async function downloadRegionForOffline() {
   }
 
   const regions = catalogue?.regions || [];
-  if (!regions.length) {
-    toast('No downloadable regions are published yet.', 'error');
-    return;
+  const covering = position
+    ? regions.find((r) => position.lat >= r.bounds.min_lat && position.lat <= r.bounds.max_lat
+        && position.lon >= r.bounds.min_lon && position.lon <= r.bounds.max_lon)
+    : null;
+
+  let region = covering;
+  if (!region) {
+    // Nothing published covers where the user actually is. Downloading some other
+    // city's map would look productive and help nobody, so build coverage instead —
+    // or say plainly why that is not possible here.
+    region = position ? await buildRegionOnDemand(position) : null;
+    if (!region) {
+      haptics.error();
+      toast(regions.length
+        ? 'No published region covers your location. Pick one from your area, or ask the service operator to publish it.'
+        : 'No downloadable regions are published yet.', 'error');
+      return;
+    }
   }
 
-  const region = position
-    ? regions.find((r) => position.lat >= r.bounds.min_lat && position.lat <= r.bounds.max_lat
-        && position.lon >= r.bounds.min_lon && position.lon <= r.bounds.max_lon) || regions[0]
-    : regions[0];
+  await downloadCatalogueRegion(region);
+}
 
+/**
+ * Ask the server to build a pack around the current position and wait for it.
+ * Returns the catalogue entry once published, or null with the reason surfaced.
+ */
+async function buildRegionOnDemand(position) {
+  banner('No published map covers this area. Requesting one for your location…');
+  let job;
+  try {
+    job = await api.packs.requestBuild({ lat: position.lat, lon: position.lon }, 10);
+  } catch (err) {
+    hide(dom.banner);
+    return null;
+  }
+
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (job.status === 'building' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    try {
+      job = await api.packs.jobStatus(job.job_id);
+    } catch (err) {
+      if (!err.status) continue;   // weak signal mid-poll; keep waiting
+      hide(dom.banner);
+      return null;
+    }
+  }
+
+  hide(dom.banner);
+  if (job.status !== 'ready') {
+    toast(job.error || 'The map build did not finish in time. Try again shortly.', 'error');
+    return null;
+  }
+
+  const catalogue = await fetchCatalogue().catch(() => null);
+  return catalogue?.regions?.find((r) => r.id === job.region_id) || null;
+}
+
+async function downloadCatalogueRegion(region) {
   const megabytes = (region.bytes / 1e6).toFixed(1);
   banner(`Downloading ${region.name} (${megabytes} MB)…`);
   try {

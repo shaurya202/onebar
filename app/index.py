@@ -14,6 +14,7 @@ from api import api_router
 from device import DeviceIdentity
 from graph_loader import GraphManager
 from hazard_store import HazardStore
+from push_store import PushSubscriptionStore
 from ratelimit import RateLimiter
 from safe_havens import SafeHavenStore
 
@@ -34,6 +35,9 @@ async def lifespan(app: FastAPI):
       ONEBAR_CACHE        — .graphml cache path (default region_graph.graphml)
       ONEBAR_HAZARDS_FILE — hazards persistence file path (default hazards_store.json)
       ONEBAR_HAVENS_FILE  — safe havens persistence file path (default safe_havens_store.json)
+      ONEBAR_PUSH_FILE    — push subscription store path (default push_subscriptions.json)
+      ONEBAR_VAPID_PRIVATE_KEY / ONEBAR_VAPID_PUBLIC_KEY
+                          — VAPID keypair enabling Web Push hazard alerts (unset = disabled)
       ONEBAR_ADMIN_TOKEN  — operator token for destructive endpoints (unset = disabled)
       ONEBAR_RATE_LIMIT   — "0" disables per-device rate limiting
       ONEBAR_DEVICE_SALT  — overrides the generated salt used to hash device ids
@@ -57,6 +61,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.hazard_store = HazardStore(persistence_file=hazard_file)
     app.state.safe_haven_store = SafeHavenStore(persistence_file=haven_file)
+    app.state.push_store = PushSubscriptionStore(
+        persistence_file=os.getenv(
+            "ONEBAR_PUSH_FILE", os.path.join(_ROOT, "push_subscriptions.json")
+        )
+    )
     # Reports are attributed to an opaque per-device key so a device can manage its
     # own reports without OneBar holding an account, an email address or a name.
     app.state.device_identity = DeviceIdentity(neighbour_file=hazard_file)

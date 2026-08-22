@@ -120,5 +120,110 @@ const noRecipients = contacts.smsHref([], 'help');
 check('an empty recipient list still carries the body',
   noRecipients.includes('body=help'), noRecipients);
 
+// --- voice guidance ----------------------------------------------------------
+
+const voice = await import('../static/js/voice.js');
+
+check('voice support is reported honestly outside a browser', voice.voiceSupported() === false);
+check('spoken distances round to clean tens below a kilometre',
+  voice.formatSpokenDistance(453) === '450 metres', voice.formatSpokenDistance(453));
+check('spoken distances switch to kilometres above one',
+  voice.formatSpokenDistance(1250) === '1.3 kilometres', voice.formatSpokenDistance(1250));
+
+{
+  const mid = voice.projectOnSegment(40.7045, -74.0, 40.7, -74.0, 40.709, -74.0);
+  check('a mid-segment fix projects halfway with no offset',
+    Math.abs(mid.t - 0.5) < 0.01 && mid.distanceMeters < 2,
+    `${mid.t.toFixed(3)}/${mid.distanceMeters.toFixed(1)}`);
+  check('fixes beyond either end clamp onto the segment',
+    voice.projectOnSegment(40.72, -74.0, 40.7, -74.0, 40.709, -74.0).t === 1
+    && voice.projectOnSegment(40.69, -74.0, 40.7, -74.0, 40.709, -74.0).t === 0);
+}
+
+function makeManeuvers() {
+  return [
+    { type: 'depart', instruction: 'Head north on Broad Street',
+      location: { lat: 40.7000, lon: -74.0000 } },
+    { type: 'turn_left', instruction: 'Turn left onto Park Row',
+      location: { lat: 40.7090, lon: -74.0000 } },
+    { type: 'arrive', instruction: 'Arrive at evacuation destination',
+      location: { lat: 40.7180, lon: -74.0000 } },
+  ];
+}
+
+// Fixes walk the route line itself; metres are measured north of the origin vertex.
+function walkedGuide(said) {
+  const guide = voice.createVoiceGuide({ speak: (t) => said.push(t), isEnabled: () => true });
+  const at = (metresNorth, lon = -74.0) => guide.onPosition(40.7 + metresNorth / 111320, lon);
+  return { guide, at };
+}
+
+{
+  const said = [];
+  const { guide, at } = walkedGuide(said);
+
+  guide.route(makeManeuvers());
+  check('starting a route speaks the first instruction',
+    said.at(-1).includes('Route started') && said.at(-1).includes('Head north'), said.at(-1));
+
+  check('a fix well behind the origin is ignored as noise', at(-900) === null);
+  check('past the depart point but far from the turn, nothing more is spoken',
+    at(150) === null);
+
+  const farPrompt = at(650);
+  check('the far band announces the turn with a distance prefix',
+    typeof farPrompt === 'string' && farPrompt.includes('350 metres') && farPrompt.includes('Turn left onto Park Row'),
+    String(farPrompt));
+  check('lingering inside an announced band does not repeat', at(655) === null);
+
+  const midPrompt = at(880);
+  check('the middle band announces once closer in',
+    typeof midPrompt === 'string' && midPrompt.includes('120 metres') && midPrompt.includes('Park Row'),
+    String(midPrompt));
+
+  const nearPrompt = at(950);
+  check('inside the last band the bare instruction is spoken',
+    typeof nearPrompt === 'string' && !nearPrompt.includes('metres') && nearPrompt.includes('Turn left onto Park Row'),
+    String(nearPrompt));
+
+  check('crossing a turn advances silently while the next leg is long', at(1050) === null);
+  check('a fix far off the route neither speaks nor inflates progress', at(1900, -73.99) === null);
+
+  const arrival = at(1995);
+  check('reaching the destination speaks an arrival message',
+    typeof arrival === 'string' && arrival.includes('arrived'), String(arrival));
+  check('after arrival the guide is inert', at(1996) === null);
+
+  guide.stop();
+  check('stopping after arrival adds nothing further', said.at(-1).includes('arrived'), said.at(-1));
+}
+
+{
+  const said = [];
+  const { guide } = walkedGuide(said);
+  guide.route(makeManeuvers());
+  guide.stop();
+  check('abandoning navigation mid-route speaks a closing line',
+    said.at(-1) === 'Navigation ended.', said.at(-1));
+}
+
+{
+  const said = [];
+  const { guide } = walkedGuide(said);
+  guide.route(makeManeuvers());
+  guide.route(makeManeuvers());
+  check('a recomputed route announces itself as a reroute',
+    said.at(-1).startsWith('Rerouting.'), said.at(-1));
+}
+
+{
+  const said = [];
+  const muted = voice.createVoiceGuide({ speak: (t) => said.push(t), isEnabled: () => false });
+  muted.route(makeManeuvers());
+  const silent = muted.onPosition(40.7, -74.0);
+  check('a disabled guide never speaks or schedules prompts',
+    said.length === 0 && silent === null, `${said.length}/${String(silent)}`);
+}
+
 process.stdout.write(JSON.stringify({ results }));
 process.exit(results.every((r) => r.pass) ? 0 : 1);

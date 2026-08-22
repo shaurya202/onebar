@@ -1,13 +1,17 @@
 import json
+import logging
 import os
 import re
 import threading
 import time
+import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
+import pack_builder
+import push_relay
 from device import is_admin, peer_source, require_device, viewer_key
 from geocode import (
     ATTRIBUTION,
@@ -31,6 +35,12 @@ from schemas import (
     HazardVoteResponse,
     HazardZone,
     LatLon,
+    PackBuildRequest,
+    PackJobResponse,
+    PushListResponse,
+    PushSubscriptionRequest,
+    PushSubscriptionResponse,
+    PushUnsubscribeRequest,
     RegionInfoResponse,
     ReverseGeocodeResponse,
     RouteRequest,
@@ -40,15 +50,23 @@ from schemas import (
     SafeHavenListResponse,
     SafetyRouteRequest,
     SafetyRouteResponse,
+    VapidPublicKeyResponse,
 )
 
 api_router = APIRouter()
 
-# Pre-built region packs live here; override for a CDN-backed deployment.
-_PACK_DIR = os.getenv(
-    "ONEBAR_PACK_DIR",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "packs"),
-)
+logger = logging.getLogger("onebar.api")
+
+def _pack_dir() -> str:
+    """Writable home of published region packs, resolved per call.
+
+    Resolved lazily rather than at import so deployments (and the test suite) can
+    redirect where packs land without reloading the module mid-flight.
+    """
+    return os.getenv(
+        "ONEBAR_PACK_DIR",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "packs"),
+    )
 
 # How far outside the loaded graph a coordinate may sit and still be routed from.
 # Beyond this the honest answer is "we don't have this area", not a snapped route.
@@ -139,6 +157,23 @@ def _feed_record_id(item: dict, drill_device: str | None) -> str:
     return f"{base}-{drill_device[:16]}" if drill_device else base
 
 
+def _notify_push(request: Request, background_tasks: BackgroundTasks, zone, exclude_device=None) -> None:
+    """Queue a fan-out of one new hazard to subscribed nearby devices.
+
+    Only hazards other people can see qualify: a private or drill report exists
+    solely for its author, who is excluded anyway. Delivery happens after the
+    response — a slow push service must never delay the write it celebrates.
+    """
+    store = getattr(request.app.state, "push_store", None)
+    if store is None:
+        return
+    if getattr(zone, "visibility", None) != "shared":
+        return
+    if getattr(zone, "provenance", None) not in ("official", "community"):
+        return
+    background_tasks.add_task(push_relay.notify_hazard, store, zone, exclude_device)
+
+
 def _rate_limit(request: Request, bucket: str, key: str | None = None) -> None:
     """Consume one unit from a rate-limit bucket, or refuse with 429.
 
@@ -186,10 +221,10 @@ def region(request: Request):
 # --- Hazard Zone Endpoints ---------------------------------------------------
 
 @api_router.post("/hazards", response_model=HazardZone, status_code=201, tags=["hazards"])
-def add_hazard(body: HazardCreateRequest, request: Request):
+def add_hazard(body: HazardCreateRequest, request: Request, background_tasks: BackgroundTasks):
     device = require_device(request)
     _rate_limit(request, "hazard_write", device)
-    return request.app.state.hazard_store.add(
+    zone = request.app.state.hazard_store.add(
         coordinates=body.coordinates,
         name=body.name,
         hazard_type=body.hazard_type,
@@ -208,6 +243,8 @@ def add_hazard(body: HazardCreateRequest, request: Request):
         reporter=device,
         ttl_hours=body.ttl_hours,
     )
+    _notify_push(request, background_tasks, zone, exclude_device=device)
+    return zone
 
 
 @api_router.get("/hazards", response_model=HazardListResponse, tags=["hazards"])
@@ -299,7 +336,7 @@ def clear_hazards(request: Request):
 
 
 @api_router.post("/hazards/sync-api", response_model=HazardSyncResponse, tags=["hazards"])
-def sync_external_hazards(body: HazardSyncRequest, request: Request):
+def sync_external_hazards(body: HazardSyncRequest, request: Request, background_tasks: BackgroundTasks):
     """
     Pull live hazard feeds from external emergency APIs (NOAA NWS Alerts, USGS
     Earthquakes, NASA EONET) and synchronise them with the hazard store.
@@ -386,6 +423,12 @@ def sync_external_hazards(body: HazardSyncRequest, request: Request):
             reporter=device if body.drill_mode else None,
         )
         created_zones.append(zone)
+
+    if not body.drill_mode:
+        # Official alerts and shared community reports wake nearby subscribers;
+        # drill fixtures are scoped to the device that asked for them and never do.
+        for zone in created_zones:
+            _notify_push(request, background_tasks, zone, exclude_device=device)
 
     if not created_zones:
         # The correct, and usually reassuring, answer. Never padded with simulated data.
@@ -642,6 +685,77 @@ def route_to_safety(body: SafetyRouteRequest, request: Request):
     )
 
 
+# --- Push notification subscriptions -----------------------------------------
+
+@api_router.get("/push/vapid-public-key", response_model=VapidPublicKeyResponse, tags=["push"])
+def push_vapid_public_key():
+    """The server's VAPID public key, or enabled=false when push is not configured.
+
+    Clients must honour `enabled: false` — subscribing is impossible without a key,
+    and pretending otherwise would store subscriptions no relay could ever use.
+    """
+    return VapidPublicKeyResponse(
+        enabled=push_relay.vapid_configured(),
+        public_key=push_relay.vapid_public_key(),
+    )
+
+
+@api_router.post("/push/subscriptions", response_model=PushSubscriptionResponse, status_code=201, tags=["push"])
+def subscribe_to_push(body: PushSubscriptionRequest, request: Request):
+    """
+    Register this device's Web Push subscription and the area it wants watched.
+
+    Attributed to the same hashed device identity as hazard reports. Re-posting
+    the same endpoint refreshes keys and watch area — browsers rotate both.
+    """
+    device = require_device(request)
+    _rate_limit(request, "push_write", device)
+    # A push service endpoint over plain HTTP would let anyone on the path read or
+    # rewrite the alert; every real push service issues HTTPS endpoints anyway.
+    if not body.endpoint.startswith("https://"):
+        raise HTTPException(400, "Push endpoints must be HTTPS.")
+    record = request.app.state.push_store.upsert(
+        endpoint=body.endpoint,
+        keys={"p256dh": body.keys.p256dh, "auth": body.keys.auth},
+        device=device,
+        watch_area=body.watch_area.model_dump() if body.watch_area else None,
+    )
+    return PushSubscriptionResponse(
+        endpoint=record["endpoint"],
+        watch_area=body.watch_area,
+        created_at=record["created_at"],
+    )
+
+
+@api_router.get("/push/subscriptions", response_model=PushListResponse, tags=["push"])
+def list_my_push_subscriptions(request: Request):
+    """This device's own subscriptions — endpoints are never shown to anyone else."""
+    raw = viewer_key(request)
+    subs = request.app.state.push_store.for_device(raw) if raw else []
+    items = [
+        PushSubscriptionResponse(
+            endpoint=s["endpoint"],
+            watch_area=s.get("watch_area"),
+            created_at=s["created_at"],
+        )
+        for s in subs
+    ]
+    return PushListResponse(subscriptions=items, total=len(items))
+
+
+@api_router.delete("/push/subscriptions", tags=["push"])
+def unsubscribe_from_push(body: PushUnsubscribeRequest, request: Request):
+    """Remove one subscription. Only the owning device (or an operator) may do so."""
+    device = require_device(request)
+    record = request.app.state.push_store.get(body.endpoint)
+    if record is None:
+        raise HTTPException(404, "No such subscription.")
+    if record["device"] != device and not is_admin(request):
+        raise HTTPException(403, "This subscription belongs to another device.")
+    request.app.state.push_store.remove(body.endpoint)
+    return {"removed": True}
+
+
 # --- Offline region packs ----------------------------------------------------
 
 @api_router.get("/packs/index.json", tags=["packs"])
@@ -653,7 +767,7 @@ def pack_index(request: Request):
     per request. Serving an empty list is valid — it means this deployment has not
     published any coverage yet.
     """
-    index_path = os.path.join(_PACK_DIR, "index.json")
+    index_path = os.path.join(_pack_dir(), "index.json")
     if not os.path.exists(index_path):
         return {"regions": []}
     with open(index_path, encoding="utf-8") as f:
@@ -668,7 +782,7 @@ def download_pack(region_id: str):
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", region_id):
         raise HTTPException(400, "Invalid region id.")
 
-    pack_path = os.path.join(_PACK_DIR, f"{region_id}.obp")
+    pack_path = os.path.join(_pack_dir(), f"{region_id}.obp")
     if not os.path.exists(pack_path):
         raise HTTPException(404, "Region pack not found.")
 
@@ -677,4 +791,131 @@ def download_pack(region_id: str):
         media_type="application/octet-stream",
         filename=f"{region_id}.obp",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+# --- On-demand region packs ---------------------------------------------------
+
+# Builds are serialized: each one hammers the Overpass API for tens of seconds to
+# minutes, and two concurrent fetches mostly just get both of them rate-limited.
+_PACK_BUILD_LOCK = threading.Lock()
+
+_pack_jobs: dict[str, dict] = {}
+_pack_jobs_lock = threading.Lock()
+_MAX_FINISHED_JOBS = 200
+
+
+def _on_demand_packs_enabled() -> bool:
+    return os.getenv("ONEBAR_ON_DEMAND_PACKS", "").strip().lower() in ("1", "true", "yes")
+
+
+def _region_id_for(lat: float, lon: float, radius_km: float) -> str:
+    """A deterministic id: the same area requested twice is the same pack."""
+    return f"od-{int(round(lat * 100))}x{int(round(lon * 100))}-{int(round(radius_km))}km"
+
+
+def _build_pack_job(job_id: str, region_id: str, name: str,
+                    lat: float, lon: float, radius_km: float) -> None:
+    with _PACK_BUILD_LOCK:
+        pack_path = os.path.join(_pack_dir(), f"{region_id}.obp")
+        if os.path.exists(pack_path):
+            # Another request (or a retry) already produced this exact area.
+            _finish_job(job_id, "ready")
+            return
+        try:
+            blob, entry = pack_builder.build_region_pack(
+                region_id=region_id,
+                name=name,
+                point=(lat, lon),
+                radius_m=radius_km * 1000.0,
+            )
+            pack_builder.write_pack(_pack_dir(), entry, blob)
+            _finish_job(job_id, "ready")
+        except Exception as e:
+            # Overpass timeouts and rate limits are routine here; surface the reason
+            # rather than leaving a job stuck on "building" for ever.
+            logger.warning("On-demand pack %s failed: %s", region_id, e)
+            _finish_job(job_id, "error", f"Map download failed: {e}"[:300])
+
+
+def _finish_job(job_id: str, status: str, error: str | None = None) -> None:
+    with _pack_jobs_lock:
+        job = _pack_jobs.get(job_id)
+        if not job:
+            return
+        job["status"] = status
+        if error:
+            job["error"] = error
+        job["finished_at"] = datetime.now(UTC).isoformat()
+
+
+@api_router.post("/packs/request", response_model=PackJobResponse, status_code=202, tags=["packs"])
+def request_region_pack(body: PackBuildRequest, request: Request, background_tasks: BackgroundTasks):
+    """
+    Ask this deployment to build coverage around a point.
+
+    Deliberately operator-gated: a build costs minutes of an upstream API's patience
+    and megabytes of disk, so it ships switched off and deployments that want it turn
+    it on knowingly. Repeat requests for an area that already has a pack return ready
+    immediately — building is idempotent per region id.
+    """
+    if not _on_demand_packs_enabled():
+        raise HTTPException(403, {
+            "detail": "This OneBar deployment does not build maps on request.",
+            "on_demand_disabled": True,
+        })
+    device = require_device(request)
+    _rate_limit(request, "pack_build", device)
+
+    region_id = _region_id_for(body.point.lat, body.point.lon, body.radius_km)
+    name = body.name or f"Custom area ({body.point.lat:.3f}, {body.point.lon:.3f})"
+    pack_path = os.path.join(_pack_dir(), f"{region_id}.obp")
+
+    job_id = uuid.uuid4().hex
+    record = {
+        "job_id": job_id,
+        "status": "ready" if os.path.exists(pack_path) else "building",
+        "region_id": region_id,
+        "name": name,
+        "requested_at": datetime.now(UTC).isoformat(),
+    }
+    with _pack_jobs_lock:
+        _pack_jobs[job_id] = record
+        # Keep the registry bounded; only finished jobs are evictable.
+        if len(_pack_jobs) > _MAX_FINISHED_JOBS * 2:
+            finished = sorted(
+                (j for j in _pack_jobs.values() if j["status"] != "building"),
+                key=lambda j: j.get("requested_at", ""),
+            )
+            for stale in finished[: len(finished) - _MAX_FINISHED_JOBS]:
+                _pack_jobs.pop(stale["job_id"], None)
+
+    if record["status"] == "building":
+        background_tasks.add_task(
+            _build_pack_job, job_id, region_id, name,
+            body.point.lat, body.point.lon, body.radius_km,
+        )
+
+    return PackJobResponse(
+        job_id=job_id,
+        status=record["status"],
+        region_id=region_id,
+        name=name,
+        download_url=f"/packs/{region_id}.obp" if record["status"] == "ready" else None,
+    )
+
+
+@api_router.get("/packs/jobs/{job_id}", response_model=PackJobResponse, tags=["packs"])
+def region_pack_job_status(job_id: str):
+    with _pack_jobs_lock:
+        job = _pack_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "No such pack build request.")
+    return PackJobResponse(
+        job_id=job["job_id"],
+        status=job["status"],
+        region_id=job.get("region_id"),
+        name=job.get("name"),
+        error=job.get("error"),
+        download_url=f"/packs/{job['region_id']}.obp" if job["status"] == "ready" else None,
     )
